@@ -1,0 +1,29 @@
+cp4,barrio,comuna,nota
+# OVERRIDES MANUALES — sólo se aplican cuando el CP NO aparece en el mapeo derivado de datos (data/cp_comuna.csv).
+# El script armar_cp_barrio.py los respeta. Cada fila debe documentar la fuente/criterio en `nota`.
+# Si un CP aparece tanto acá como en el derivado, GANA el derivado (que viene de calles oficiales).
+1000,SAN NICOLAS,1,Casillas postales Microcentro (Correo Argentino sucursal central); rango 1000-1009 reservado a casillas / oficinas zona Avda. Madero - San Nicolás. Sin calles físicas en CPA → fallback al barrio dominante del rango.
+1031,MONSERRAT,1,Casillas Tribunales / Microcentro sur (sin calles físicas en CPA). Rango 1030-1039 → Microcentro Tribunales.
+1032,MONSERRAT,1,Casillas Tribunales.
+1033,MONSERRAT,1,Casillas Tribunales.
+1039,SAN NICOLAS,1,Casillas Microcentro.
+1040,SAN NICOLAS,1,Casillas Microcentro.
+1041,SAN NICOLAS,1,Casillas Microcentro.
+1044,SAN NICOLAS,1,Casillas Microcentro.
+1048,SAN NICOLAS,1,Casillas Av. Corrientes / Microcentro.
+1058,SAN NICOLAS,1,Casillas zona financiera (Reconquista / Av. de Mayo).
+1089,MONSERRAT,1,Casillas zona Cong. Nacional.
+1090,MONSERRAT,1,Casillas zona Congreso.
+1101,CONSTITUCION,1,Casillas zona Constitución / Av. Brasil.
+1110,RECOLETA,2,Casillas zona Av. Las Heras.
+1115,RECOLETA,2,Casillas zona Recoleta.
+1127,RECOLETA,2,Casillas zona Recoleta.
+1180,PALERMO,14,Casillas zona Palermo Soho.
+1190,ALMAGRO,5,Casillas zona Almagro / Av. Corrientes.
+1201,SAN CRISTOBAL,3,Casillas zona San Cristóbal.
+1203,SAN CRISTOBAL,3,Casillas zona San Cristóbal.
+1205,ALMAGRO,5,Casillas zona Almagro sur.
+1207,SAN CRISTOBAL,3,Casillas zona Constitución / Plaza Constitución.
+1211,ALMAGRO,5,Casillas zona Almagro este.
+1218,ALMAGRO,5,Casillas zona Almagro.
+1259,PARQUE PATRICIOS,4,Casillas zona Pque. Patricios.

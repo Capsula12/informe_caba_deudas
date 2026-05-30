@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.pyc
+
+# Datos fuente pesados del pipeline — el tablero NO los consume.
+# Se descargan/regeneran con los scripts (ver README "Pipeline de generación").
+data/alturas.CSV
+data/calles.CSV
+data/callejero_gcba.csv
+data/localidad.CSV
+
+# Datos personales — NO publicar (Ley 25.326, contiene CUILs).
+data/deudores_caba.parquet

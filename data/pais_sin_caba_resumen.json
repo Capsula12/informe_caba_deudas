@@ -1,0 +1,15 @@
+{
+  "n_personas": 18276136,
+  "n_morosos": 5009711,
+  "n_con_pnfc": 11676445,
+  "n_con_banco": 12357700,
+  "n_con_financiera": 1941961,
+  "deuda_total_miles": 54585960792.0,
+  "deuda_mora_miles": 11827603561.0,
+  "deuda_total_mm": 54585960.79,
+  "deuda_mora_mm": 11827603.56,
+  "pct_mora_personas": 27.41,
+  "pct_mora_deuda": 21.67,
+  "pct_personas_con_pnfc": 63.89,
+  "nota": "Personas físicas vivas con consumo > 0 en provincia ARCA != '00' (resto del país, excluye CABA). Mismo canon que el cubo CABA."
+}

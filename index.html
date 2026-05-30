@@ -1,0 +1,1101 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Informe CABA — Distribución geográfica de la deuda de consumo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/chroma-js@2.4.2/chroma.min.js"></script>
+<style>
+:root{
+  --bg:#0f1419; --panel:#1a2030; --panel-2:#232a3d; --border:#2d3548;
+  --text:#e5e7eb; --muted:#94a3b8; --accent:#3b82f6; --accent-2:#22d3ee;
+  --danger:#ef4444; --warn:#f59e0b; --ok:#10b981;
+  --fs-sm:12px; --fs-md:13px; --fs-lg:15px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:var(--fs-md)}
+header{padding:12px 22px;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:12px}
+header h1{font-size:17px;font-weight:600;letter-spacing:-0.3px}
+header .meta{color:var(--muted);font-size:var(--fs-sm)}
+header .meta strong{color:var(--text)}
+header .meta a{color:var(--accent-2);text-decoration:none}
+header .meta a:hover{text-decoration:underline}
+.layout{display:grid;grid-template-columns:300px 1fr 320px;gap:0;height:calc(100vh - 56px)}
+.sidebar,.detail-panel{background:var(--panel);padding:14px;overflow-y:auto;border-color:var(--border)}
+.sidebar{border-right:1px solid var(--border)}
+.detail-panel{border-left:1px solid var(--border)}
+.map-area{position:relative;background:#000}
+#map{width:100%;height:100%}
+.map-overlay-btn{position:absolute;top:14px;right:14px;z-index:500;background:var(--panel);border:1px solid var(--border);color:var(--text);padding:7px 12px;border-radius:6px;cursor:pointer;font-size:var(--fs-sm);font-weight:500;box-shadow:0 2px 8px rgba(0,0,0,0.4)}
+.map-overlay-btn:hover{background:var(--panel-2);border-color:var(--accent)}
+.map-loading{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:500;background:rgba(15,20,25,0.92);border:1px solid var(--accent);color:var(--accent-2);padding:6px 14px;border-radius:6px;font-size:var(--fs-sm);font-weight:500;display:none}
+.map-loading.show{display:block}
+section{margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+section:last-child{border-bottom:none}
+section h3{font-size:11px;font-weight:600;letter-spacing:0.6px;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+section h3 .info{color:var(--accent-2);cursor:help;font-size:14px;line-height:1}
+/* TOGGLE 3 botones */
+.toggle{display:flex;background:var(--panel-2);border-radius:8px;padding:3px;gap:3px}
+.toggle button{flex:1;background:transparent;border:none;color:var(--muted);padding:7px 8px;border-radius:6px;cursor:pointer;font-size:var(--fs-md);font-weight:500;transition:.15s}
+.toggle button:hover{color:var(--text)}
+.toggle button.active{background:var(--accent);color:#fff}
+.toggle button.disabled{opacity:0.4;cursor:not-allowed}
+/* SELECT */
+select{width:100%;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;font-size:var(--fs-md);cursor:pointer}
+select:focus{outline:none;border-color:var(--accent)}
+.metric-help{margin-top:6px;color:var(--muted);font-size:11px;line-height:1.4}
+/* FILTROS - multi-select */
+.filtros{display:flex;flex-direction:column;gap:10px}
+.filter-block{}
+.filter-block label{display:block;font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:3px 8px;border-radius:12px;font-size:11px;cursor:pointer;transition:.15s;user-select:none}
+.chip:hover{border-color:var(--accent)}
+.chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.filter-actions{display:flex;gap:6px;margin-top:8px}
+.filter-actions button{flex:1;background:var(--panel-2);border:1px solid var(--border);color:var(--text);padding:5px 8px;border-radius:5px;font-size:11px;cursor:pointer}
+.filter-actions button:hover{border-color:var(--accent);color:var(--accent-2)}
+.filter-actions button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.filter-status{font-size:10px;color:var(--muted);margin-top:4px;font-style:italic}
+.filter-status.active{color:var(--ok);font-style:normal;font-weight:500}
+/* KPIs */
+.kpi-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.kpi{background:var(--panel-2);padding:7px 9px;border-radius:6px;position:relative}
+.kpi label{display:block;color:var(--muted);font-size:9.5px;text-transform:uppercase;letter-spacing:0.3px;margin-bottom:2px}
+.kpi span{display:block;font-size:14px;font-weight:600}
+.kpi span.small{font-size:12px}
+.kpi .delta{font-size:9px;color:var(--muted);margin-top:1px}
+.kpi .delta.up{color:var(--danger)}
+.kpi .delta.dn{color:var(--ok)}
+/* LEYENDA */
+#legend{display:flex;flex-direction:column;gap:3px}
+.legend-row{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+.legend-bar{height:12px;border-radius:3px;width:24px;flex-shrink:0}
+.legend-gradient{height:14px;border-radius:3px;width:100%;margin:6px 0 2px}
+.legend-axis{display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:2px}
+/* DETAIL */
+.detail-empty{color:var(--muted);font-style:italic;padding:8px 0}
+.detail-row{display:flex;justify-content:space-between;align-items:baseline;padding:4px 0;border-bottom:1px solid var(--border);font-size:var(--fs-md)}
+.detail-row:last-child{border-bottom:none}
+.detail-row label{color:var(--muted)}
+.detail-row .v{font-weight:600;text-align:right}
+.detail-row .v.danger{color:var(--danger)}
+.detail-row .v.ok{color:var(--ok)}
+.detail-h{margin:12px 0 4px;font-size:10.5px;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;color:var(--accent-2)}
+.detail-conf{display:inline-block;padding:1px 6px;border-radius:8px;font-size:10px;font-weight:500;margin-left:6px}
+.detail-conf.high{background:rgba(16,185,129,0.2);color:var(--ok)}
+.detail-conf.med{background:rgba(245,158,11,0.2);color:var(--warn)}
+.detail-conf.low{background:rgba(239,68,68,0.2);color:var(--danger)}
+.cp-list{max-height:220px;overflow-y:auto;background:var(--panel-2);border-radius:6px;padding:4px}
+.cp-list table{width:100%;font-size:11px;border-collapse:collapse}
+.cp-list th{text-align:right;color:var(--muted);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--panel-2)}
+.cp-list th:first-child{text-align:left}
+.cp-list td{padding:3px 6px;text-align:right}
+.cp-list td:first-child{text-align:left;font-weight:600}
+.cp-list tr:hover{background:rgba(59,130,246,0.1)}
+/* MAP */
+.leaflet-container{background:#0a0d12;font-family:inherit}
+.leaflet-control-attribution{background:rgba(0,0,0,0.65)!important;color:#94a3b8!important;font-size:10px!important}
+.leaflet-control-attribution a{color:#94a3b8!important}
+.geo-tip{background:var(--panel);border:1px solid var(--border);color:var(--text);font-size:var(--fs-md);padding:8px 10px;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.5);min-width:180px}
+.geo-tip .tip-h{font-weight:600;font-size:14px;margin-bottom:3px;color:var(--accent-2)}
+.geo-tip .tip-sub{color:var(--muted);font-size:10px;margin-bottom:5px}
+.geo-tip .tip-r{display:flex;justify-content:space-between;gap:14px;font-size:11px;line-height:1.5}
+.geo-tip .tip-r label{color:var(--muted)}
+.geo-tip .tip-metric{margin-top:4px;padding-top:4px;border-top:1px solid var(--border);font-weight:600;font-size:13px}
+.leaflet-tooltip-top:before,.leaflet-tooltip-bottom:before,
+.leaflet-tooltip-left:before,.leaflet-tooltip-right:before{display:none}
+.leaflet-tooltip{box-shadow:none;border:none;background:transparent;padding:0}
+/* LOADING overlay */
+#init-loading{position:fixed;inset:0;background:rgba(15,20,25,0.96);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:14px}
+#init-loading.hidden{display:none}
+.spinner{width:42px;height:42px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#init-loading .msg{color:var(--muted);font-size:13px}
+/* FUENTES expandible */
+.fuentes-link{font-size:11px;cursor:pointer;color:var(--accent-2)}
+.fuentes-link:hover{text-decoration:underline}
+.fuentes-content{display:none;margin-top:8px;padding:10px;background:var(--panel-2);border-radius:6px;font-size:11px;line-height:1.5;color:var(--muted)}
+.fuentes-content.show{display:block}
+.fuentes-content a{color:var(--accent-2);text-decoration:none}
+.fuentes-content a:hover{text-decoration:underline}
+.fuentes-content p{margin-bottom:6px}
+.fuentes-content code{background:rgba(255,255,255,0.05);padding:1px 4px;border-radius:3px;font-size:10px}
+/* RESPONSIVE */
+@media (max-width:1200px){
+  .layout{grid-template-columns:260px 1fr 280px}
+}
+@media (max-width:900px){
+  .layout{grid-template-columns:1fr;grid-template-rows:auto 1fr auto;height:auto}
+  .sidebar,.detail-panel{max-height:none;border:none;border-bottom:1px solid var(--border)}
+  .map-area{height:60vh}
+}
+</style>
+</head>
+<body>
+
+<div id="init-loading">
+  <div class="spinner"></div>
+  <div class="msg" id="init-msg">Cargando datos…</div>
+</div>
+
+<header>
+  <div>
+    <h1>Informe CABA · Distribución geográfica de la deuda de consumo</h1>
+    <div class="meta">Personas físicas vivas · consumo puro (sin gar. preferidas B) · cartera CONSUMO_VIV o PNFC</div>
+  </div>
+  <div class="meta">
+    Período: <strong id="m-periodo">…</strong>
+    &nbsp;·&nbsp; <a href="#" id="link-fuentes">Fuentes y metodología</a>
+    &nbsp;·&nbsp; Generado: <span id="m-gen">…</span>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="sidebar">
+
+    <section>
+      <h3>Granularidad</h3>
+      <div class="toggle" id="gran">
+        <button data-gran="comuna" class="active">Comuna<br><span style="font-size:9px;opacity:0.7">15</span></button>
+        <button data-gran="barrio">Barrio<br><span style="font-size:9px;opacity:0.7">48</span></button>
+        <button data-gran="cp">CP<br><span style="font-size:9px;opacity:0.7">~255</span></button>
+      </div>
+    </section>
+
+    <section>
+      <h3>Métrica</h3>
+      <select id="metric">
+        <optgroup label="Morosidad">
+          <option value="pct_mora_personas" selected>% personas en mora</option>
+          <option value="pct_mora_deuda">% monto en mora</option>
+          <option value="n_morosos">Cantidad de morosos</option>
+          <option value="deuda_mora_mm">Deuda morosa (MM$)</option>
+        </optgroup>
+        <optgroup label="PNFCs">
+          <option value="pct_personas_con_pnfc">% personas con PNFC</option>
+          <option value="n_con_pnfc">Cantidad con PNFC</option>
+          <option value="pct_deuda_pnfc">% deuda con PNFCs</option>
+          <option value="deuda_pnfc_mm">Deuda con PNFCs (MM$)</option>
+        </optgroup>
+        <optgroup label="Volumen">
+          <option value="n_personas">Cantidad de deudores</option>
+          <option value="deuda_total_mm">Deuda total (MM$)</option>
+        </optgroup>
+      </select>
+      <div class="metric-help" id="metric-help"></div>
+    </section>
+
+    <section>
+      <h3>Filtros<span class="fuentes-link" id="filtros-reset" style="display:none">limpiar todo</span></h3>
+      <div class="filtros">
+        <div class="filter-block">
+          <label>Sexo</label>
+          <div class="chips" id="f-sexo"></div>
+        </div>
+        <div class="filter-block">
+          <label>Rango etario</label>
+          <div class="chips" id="f-edad"></div>
+        </div>
+        <div class="filter-block">
+          <label>Tipo de acreedor (tiene…)</label>
+          <div class="chips" id="f-tipo"></div>
+        </div>
+        <div class="filter-block">
+          <label>Tramo de deuda</label>
+          <div class="chips" id="f-tramo"></div>
+        </div>
+      </div>
+      <div class="filter-status" id="filter-status">Sin filtros activos · valores agregados directos.</div>
+    </section>
+
+    <section>
+      <h3>Totales CABA <span style="text-transform:none;letter-spacing:0;color:var(--muted)">(con filtros aplicados)</span></h3>
+      <div class="kpi-grid">
+        <div class="kpi"><label>Personas</label><span id="kpi-pers"></span><div class="delta" id="kpi-pers-d"></div></div>
+        <div class="kpi"><label>Morosos</label><span id="kpi-mor"></span><div class="delta" id="kpi-mor-d"></div></div>
+        <div class="kpi"><label>% mora pers.</label><span id="kpi-pmor"></span><div class="delta" id="kpi-pmor-d"></div></div>
+        <div class="kpi"><label>% mora deuda</label><span id="kpi-pdmor"></span><div class="delta" id="kpi-pdmor-d"></div></div>
+        <div class="kpi"><label>Deuda total</label><span id="kpi-deu" class="small"></span></div>
+        <div class="kpi"><label>Deuda mora</label><span id="kpi-dmor" class="small"></span></div>
+        <div class="kpi"><label>Con PNFC</label><span id="kpi-pnfc"></span></div>
+        <div class="kpi"><label>% c/ PNFC</label><span id="kpi-ppnfc"></span><div class="delta" id="kpi-ppnfc-d"></div></div>
+      </div>
+      <div class="filter-status" id="vs-pais">Delta vs resto del país: cargando…</div>
+    </section>
+
+    <section>
+      <h3>Leyenda · <span id="legend-metric" style="text-transform:none;letter-spacing:0;color:var(--accent-2)"></span></h3>
+      <div id="legend"></div>
+    </section>
+
+  </aside>
+
+  <main class="map-area">
+    <div id="map"></div>
+    <div class="map-loading" id="map-loading">Recalculando con filtros…</div>
+    <button id="btn-home" class="map-overlay-btn" title="Ver toda CABA">⛶ Vista completa</button>
+  </main>
+
+  <aside class="detail-panel">
+    <h3 style="margin-bottom:10px;color:var(--accent-2);font-size:14px;text-transform:none;letter-spacing:0;font-weight:600" id="detail-title">
+      Pasá el mouse o clickeá una zona
+    </h3>
+    <div id="detail-body">
+      <div class="detail-empty">Seleccioná un polígono para ver el detalle.</div>
+    </div>
+  </aside>
+
+</div>
+
+<!-- ===================== MODAL DE FUENTES ===================== -->
+<div id="modal-fuentes" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;max-width:760px;max-height:80vh;overflow-y:auto;padding:24px;color:var(--text);font-size:13px;line-height:1.55">
+    <h2 style="font-size:18px;margin-bottom:14px;color:var(--accent-2)">Fuentes, metodología y trazabilidad</h2>
+
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Fuentes de datos</h3>
+    <ul style="margin:8px 0 8px 18px;color:var(--muted)">
+      <li><strong>BCRA Central de Deudores</strong> — Archivos públicos descargados por <a href="https://www.bcra.gob.ar/BCRAyVos/Centrales_de_informacion.asp" target="_blank">https://www.bcra.gob.ar/BCRAyVos/Centrales_de_informacion.asp</a>. Indexados a <code>consolidado.duckdb</code>.</li>
+      <li><strong>Padrón ARCA</strong> — Provee provincia, CP, fecha de nacimiento, sexo y fecha de fallecimiento por CUIT. <code>padron</code> en <code>consolidado.duckdb</code>.</li>
+      <li><strong>Callejero CABA (GeoJSON con LINESTRING y barrio_par/imp)</strong> — <a href="https://data.buenosaires.gob.ar/dataset/calles" target="_blank">data.buenosaires.gob.ar/dataset/calles</a>. Versión: 4 mayo 2026. 31.961 segmentos. Licencia abierta GCBA.</li>
+      <li><strong>GeoJSON Barrios CABA (48)</strong> — <a href="https://github.com/OpenDataCordoba/barrios" target="_blank">OpenDataCordoba/barrios</a> (caba_barrios.geojson). Mismo dataset que GCBA pero normalizado.</li>
+      <li><strong>GeoJSON Comunas CABA (15)</strong> — derivado por disolución (union) de los polígonos de barrios por la columna COMUNA. Resultado idéntico al GeoJSON oficial pero sin requerir descarga adicional.</li>
+      <li><strong>CPA Correo Argentino (calle + altura → código postal)</strong> — Snapshot DBF 2010 extraído del repo <a href="https://github.com/OpenDataCordoba/codigo-postal-argentino" target="_blank">OpenDataCordoba/codigo-postal-argentino</a> (<code>cpa_argentina.zip</code>, archivos <code>localidad.CSV</code>, <code>calles.CSV</code>, <code>alturas.CSV</code>).</li>
+    </ul>
+
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Universo de personas</h3>
+    <p style="color:var(--muted)">Réplica exacta del canon del tablero principal (<code>Scripts/6_tablero_base.py</code>):</p>
+    <ul style="margin:6px 0 6px 18px;color:var(--muted)">
+      <li>Personas físicas: <code>LEFT(nro_id, 1) = '2'</code> (prefijos CUIT 20/23/27)</li>
+      <li>Vivas: <code>padron.fecha_fallecimiento = ''</code></li>
+      <li>Consumo puro: <code>gar_pref_b = 0</code> a nivel de línea (excluye hipotecas, prendas, derechos reales)</li>
+      <li>Cartera: <code>cartera ∈ ('CONSUMO_VIV', 'PNFC')</code> según T-CLADEU BCRA</li>
+      <li>Acotamos a CABA: <code>padron.provincia = '00'</code></li>
+      <li>Fórmula consumo: <code>prestamos − gar_pref_a + otros_conceptos</code></li>
+      <li>Es moroso: <code>MAX(situacion) ≥ 3</code> por persona</li>
+    </ul>
+
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Construcción del mapeo CP → barrio → comuna</h3>
+    <p style="color:var(--muted)">El código postal en CABA es una zona de cartero y NO calza 1:1 con barrios oficiales. Construimos un mapeo empírico:</p>
+    <ol style="margin:6px 0 6px 18px;color:var(--muted)">
+      <li>Para cada calle del CPA en CABA, buscamos su equivalente en el callejero GCBA. <strong>Match exacto</strong>: 1.359 (66%); <strong>match por apellido</strong>: 217 (10%); <strong>sin match</strong>: 492 (24%).</li>
+      <li>Para cada par <code>(calle, altura)</code> del CPA, intersectamos con los segmentos del callejero. <em>Si el callejero no informa altura (segmentos 0-0), se descarta el voto</em> para evitar votos espurios en avenidas largas (Av. del Libertador, etc.).</li>
+      <li>Cada segmento del callejero que solapa aporta un voto al barrio del lado par e impar (mitad y mitad si difieren), ponderado por la fracción del rango del callejero cubierta.</li>
+      <li>El barrio dominante por CP4 = max(votos). El porcentaje de confianza = votos_dominante / votos_total.</li>
+      <li>Cada barrio CABA pertenece a una sola comuna (relación fija del GeoJSON oficial). Joineamos para obtener CP4 → comuna.</li>
+      <li>Para CPs sin calles en el dataset CPA (típicamente casillas postales de oficinas Microcentro), aplicamos overrides manuales documentados en <code>data/cp_comuna_override.csv</code>.</li>
+    </ol>
+    <p style="color:var(--muted);margin-top:6px">Resultado: <strong>284 CPs mapeados</strong> (260 derivados + 24 overrides), cobertura <strong>94.2%</strong> de las personas CABA con consumo en el padrón. Los polígonos por CP4 se generan en <code>armar_poligonos_cp.py</code> haciendo buffer 60m alrededor de las LINESTRING del callejero y union.</p>
+
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Confianza del mapeo</h3>
+    <p style="color:var(--muted)">Cada CP tiene un <em>confianza_pct</em> (cuán claro es su barrio dominante):</p>
+    <ul style="margin:6px 0 6px 18px;color:var(--muted)">
+      <li>≥95%: 116 CPs — barrio claramente identificado.</li>
+      <li>80-95%: 23 CPs — barrio dominante claro.</li>
+      <li>60-80%: 51 CPs — barrio dominante razonable.</li>
+      <li>40-60%: 63 CPs — barrio dominante débil (marcados AMBIGUO).</li>
+      <li>&lt;40%: 7 CPs — muy ambiguo, el CP cubre múltiples barrios.</li>
+    </ul>
+    <p style="color:var(--muted);margin-top:6px">En el panel "Detalle por zona" se muestra la confianza específica del CP seleccionado. El detalle completo (todos los barrios candidatos por CP) está en <code>data/cp_barrio_detalle.csv</code>.</p>
+
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Notas y limitaciones</h3>
+    <ul style="margin:6px 0 6px 18px;color:var(--muted)">
+      <li>Los polígonos por CP <strong>pueden solaparse</strong> entre sí. En CABA, una misma manzana puede tener dos CPs distintos según el lado de la calle.</li>
+      <li>El padrón ARCA usa el CPA al momento de la última actualización del CUIT. Las personas pueden haberse mudado.</li>
+      <li>El 5.8% de las personas CABA no aparece en el mapa: 4.6% no tiene CP en el padrón (NULL o "0000") + 1.2% tiene un CP que no fue mapeable.</li>
+      <li>Como el CPA Correo Argentino del dataset es de 2010, las calles nuevas posteriores no están. El callejero GCBA es de 2026 y sí las tiene; las usamos para los polígonos donde están las personas.</li>
+    </ul>
+
+    <p style="margin-top:14px;text-align:right">
+      <button id="modal-close" style="background:var(--accent);border:none;color:#fff;padding:8px 18px;border-radius:6px;cursor:pointer;font-size:13px">Cerrar</button>
+    </p>
+  </div>
+</div>
+
+<script type="module">
+"use strict";
+
+/* ═════════════════════ CONFIG ═════════════════════ */
+const DATA_DIR = "data/";
+const GEO_DIR  = "geo/";
+
+const METRICS = {
+  pct_mora_personas:     {label:"% personas en mora",   short:"% mora pers", unit:"%",  fmt:"pct1",   scale:"red",     help:"De los deudores de la zona, qué porcentaje tiene al menos un vínculo con situación BCRA ≥ 3."},
+  pct_mora_deuda:        {label:"% monto en mora",      short:"% mora $",    unit:"%",  fmt:"pct1",   scale:"red",     help:"De la deuda total de la zona, qué porcentaje corresponde a vínculos en situación BCRA ≥ 3."},
+  n_morosos:             {label:"Morosos (cantidad)",   short:"# morosos",   unit:"",   fmt:"int",    scale:"red",     help:"Cantidad absoluta de personas en mora en la zona."},
+  deuda_mora_mm:         {label:"Deuda morosa (MM$)",   short:"Deuda mora",  unit:"MM$",fmt:"mm",     scale:"red",     help:"Monto absoluto de deuda en mora (en millones de pesos)."},
+  pct_personas_con_pnfc: {label:"% personas con PNFC",  short:"% con PNFC",  unit:"%",  fmt:"pct1",   scale:"purple",  help:"Porcentaje de personas con ≥1 vínculo con un PNFC (MercadoPago, Naranja X, fintechs)."},
+  n_con_pnfc:            {label:"Cant. con PNFC",       short:"# con PNFC",  unit:"",   fmt:"int",    scale:"purple",  help:"Cantidad absoluta de personas con al menos un PNFC."},
+  pct_deuda_pnfc:        {label:"% deuda con PNFCs",    short:"% deuda PNFC",unit:"%",  fmt:"pct1",   scale:"purple",  help:"De la deuda total de la zona, qué porcentaje está informado por PNFCs."},
+  deuda_pnfc_mm:         {label:"Deuda con PNFCs (MM$)",short:"Deuda PNFC",  unit:"MM$",fmt:"mm",     scale:"purple",  help:"Monto absoluto de deuda informada por PNFCs."},
+  n_personas:            {label:"Deudores (cantidad)",  short:"# deudores",  unit:"",   fmt:"int",    scale:"blue",    help:"Cantidad de personas físicas con consumo>0 que declararon esta zona como residencia."},
+  deuda_total_mm:        {label:"Deuda total (MM$)",    short:"Deuda total", unit:"MM$",fmt:"mm",     scale:"blue",    help:"Monto total de deuda de consumo en la zona."},
+};
+
+const SCALES = {
+  red:    ["#fff5d6","#fed976","#feb24c","#fd8d3c","#fc4e2a","#bd0026"],   // YlOrRd
+  purple: ["#f2f0f7","#cbc9e2","#9e9ac8","#807dba","#6a51a3","#4a1486"],   // Purples
+  blue:   ["#f7fbff","#c6dbef","#9ecae1","#6baed6","#3182bd","#08519c"],   // Blues
+};
+
+const FILTRO_OPCIONES = {
+  sexo:  ["Varón", "Mujer", "Otro/SD"],
+  edad:  ["18-19","20-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70+","Menor 18","Sin dato","Fecha inválida"],
+  tipo:  ["banco","financiera","pnfc"],   // se mapea a tiene_banco=1 / tiene_financiera=1 / tiene_pnfc=1
+  tramo: ["< $50K","$50K-$100K","$100K-$200K","$200K-$300K","$300K-$600K","$600K-$1M","$1M-$2M","$2M-$4M","$4M-$7M","$7M-$10M","$10M-$15M","$15M-$20M","> $20M"],
+};
+
+/* ═════════════════════ ESTADO ═════════════════════ */
+const S = {
+  gran: "comuna",
+  metric: "pct_mora_personas",
+  filtros: { sexo:new Set(), edad:new Set(), tipo:new Set(), tramo:new Set() },
+  data: {
+    comuna: null, barrio: null, cp: null, meta: null,
+    geoComuna: null, geoBarrio: null, geoCp: null,
+  },
+  byKey: { comuna:new Map(), barrio:new Map(), cp:new Map(), cpByBarrio:new Map() },
+  layer: null,
+  scale: null,
+  homeView: null,
+  /* DuckDB */
+  duckdb: null, conn: null,
+  filtrosActivos: false,
+  /* Comparativa con el resto del país */
+  pais: { n_pers:null, n_mor:null, n_pnfc:null, pct_mora_pers:null, pct_mora_deuda:null, pct_pnfc:null },
+};
+window.S = S;
+
+/* ═════════════════════ HELPERS ═════════════════════ */
+const F = {
+  int(v){ return v==null ? "—" : Math.round(v).toLocaleString("es-AR"); },
+  pct1(v){ return v==null ? "—" : v.toFixed(1).replace(".",",") + "%"; },
+  pct2(v){ return v==null ? "—" : v.toFixed(2).replace(".",",") + "%"; },
+  mm(v){   return v==null ? "—" : v.toLocaleString("es-AR",{maximumFractionDigits:1}) + " MM$"; },
+  bln(v){  return v==null ? "—" : (v/1e3).toLocaleString("es-AR",{maximumFractionDigits:2}) + " B$"; },
+  any(v,fmt){ return F[fmt] ? F[fmt](v) : (v==null?"—":String(v)); },
+  metric(v,m){ const def = METRICS[m]; return def ? F.any(v, def.fmt) : v; },
+};
+
+function setLoading(msg){
+  const el = document.getElementById("init-msg");
+  if(el) el.textContent = msg;
+}
+function hideLoading(){ document.getElementById("init-loading").classList.add("hidden"); }
+function showMapLoading(on){
+  document.getElementById("map-loading").classList.toggle("show", !!on);
+}
+
+/* ═════════════════════ LOAD INICIAL ═════════════════════ */
+async function loadJSON(path){ const r = await fetch(path); if(!r.ok) throw new Error(`HTTP ${r.status} en ${path}`); return r.json(); }
+
+async function loadAll(){
+  setLoading("Cargando geografía y métricas…");
+  const [meta, comuna, barrio, cp, geoCom, geoBar, geoCp] = await Promise.all([
+    loadJSON(DATA_DIR + "caba_metadata.json"),
+    loadJSON(DATA_DIR + "comuna_metrics.json"),
+    loadJSON(DATA_DIR + "barrio_metrics.json"),
+    loadJSON(DATA_DIR + "cp_metrics.json"),
+    loadJSON(GEO_DIR + "comunas.geojson"),
+    loadJSON(GEO_DIR + "barrios.geojson"),
+    loadJSON(GEO_DIR + "cps.geojson"),
+  ]);
+  S.data = {comuna, barrio, cp, meta, geoComuna:geoCom, geoBarrio:geoBar, geoCp};
+
+  // Agregar columnas derivadas (deuda_*_mm)
+  function addMM(arr){
+    arr.forEach(r => {
+      r.deuda_total_mm    = (r.deuda_total_miles || 0) / 1e3;
+      r.deuda_mora_mm     = (r.deuda_mora_miles  || 0) / 1e3;
+      r.deuda_pnfc_mm     = (r.deuda_pnfc_miles  || 0) / 1e3;
+      r.deuda_banco_mm    = (r.deuda_banco_miles || 0) / 1e3;
+      r.deuda_financiera_mm = (r.deuda_financiera_miles || 0) / 1e3;
+      r.deuda_mora_pnfc_mm = (r.deuda_mora_pnfc_miles || 0) / 1e3;
+    });
+  }
+  addMM(comuna); addMM(barrio); addMM(cp);
+
+  // Indexar
+  comuna.forEach(r => S.byKey.comuna.set(String(r.comuna), r));
+  barrio.forEach(r => S.byKey.barrio.set(r.barrio, r));
+  cp.forEach(r => {
+    S.byKey.cp.set(r.cp4, r);
+    if(!S.byKey.cpByBarrio.has(r.barrio)) S.byKey.cpByBarrio.set(r.barrio, []);
+    S.byKey.cpByBarrio.get(r.barrio).push(r);
+  });
+
+  document.getElementById("m-periodo").textContent = meta.periodo;
+  document.getElementById("m-gen").textContent = meta.fecha_generacion;
+  renderKPIs(meta.totales);
+}
+
+/* ═════════════════════ DUCKDB-WASM (lazy) ═════════════════════ */
+async function ensureDuckDB(){
+  if(S.duckdb) return;
+  setLoading("Inicializando motor SQL (DuckDB-WASM)…");
+  const duckdb = await import("https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm/+esm");
+  const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+  const workerUrl = URL.createObjectURL(
+    new Blob([`importScripts("${bundle.mainWorker}");`], { type: "text/javascript" })
+  );
+  const worker = new Worker(workerUrl);
+  const logger = new duckdb.ConsoleLogger(duckdb.LogLevel.WARNING);
+  const db = new duckdb.AsyncDuckDB(logger, worker);
+  await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+  URL.revokeObjectURL(workerUrl);
+  const conn = await db.connect();
+  // Cargar parquets
+  setLoading("Cargando cubos para filtros…");
+  const loadParquet = async (file, name) => {
+    const buf = await fetch(DATA_DIR + file).then(r => r.arrayBuffer());
+    await db.registerFileBuffer(name, new Uint8Array(buf));
+  };
+  await loadParquet("cubo_cp.parquet",     "cp.parquet");
+  await loadParquet("cubo_comuna.parquet", "comuna.parquet");
+  S.duckdb = db; S.conn = conn;
+}
+
+function buildWhere(){
+  const w = [];
+  if(S.filtros.sexo.size)  w.push(`sexo IN (${[...S.filtros.sexo].map(x=>`'${x.replace(/'/g,"''")}'`).join(",")})`);
+  if(S.filtros.edad.size)  w.push(`rango_etario IN (${[...S.filtros.edad].map(x=>`'${x.replace(/'/g,"''")}'`).join(",")})`);
+  if(S.filtros.tramo.size) w.push(`tramo_consumo IN (${[...S.filtros.tramo].map(x=>`'${x.replace(/'/g,"''")}'`).join(",")})`);
+  if(S.filtros.tipo.size){
+    // Modo "tiene al menos uno de los tipos elegidos" (OR)
+    const flags = [...S.filtros.tipo].map(t => `tiene_${t} = 1`);
+    w.push("(" + flags.join(" OR ") + ")");
+  }
+  return w.length ? "WHERE " + w.join(" AND ") : "";
+}
+
+/* Recalcula métricas geográficas con filtros via DuckDB.
+   Devuelve {byKey: Map(geoKey -> row con misma forma que JSON), totales} */
+async function recalcConFiltros(){
+  await ensureDuckDB();
+  const where = buildWhere();
+  const geoCol = (S.gran === "cp" ? "cp4" : (S.gran === "comuna" ? "comuna" : null));
+
+  // Para granularidad "barrio", usamos cubo_cp + join con tabla in-memory de cp4→barrio
+  let sql;
+  if(geoCol){
+    const tabla = S.gran === "cp" ? "cp.parquet" : "comuna.parquet";
+    sql = `
+      SELECT
+        ${geoCol} AS geo,
+        COUNT(*)                                                AS n_personas_groups,
+        SUM(n_deudores)                                         AS n_personas,
+        SUM(n_morosos)                                          AS n_morosos,
+        SUM(n_con_pnfc)                                         AS n_con_pnfc,
+        SUM(deuda_total_miles)                                  AS deuda_total_miles,
+        SUM(deuda_mora_miles)                                   AS deuda_mora_miles,
+        SUM(deuda_pnfc_miles)                                   AS deuda_pnfc_miles,
+        SUM(deuda_mora_pnfc_miles)                              AS deuda_mora_pnfc_miles,
+        SUM(deuda_banco_miles)                                  AS deuda_banco_miles,
+        SUM(deuda_financiera_miles)                             AS deuda_financiera_miles
+      FROM '${tabla}'
+      ${where}
+      GROUP BY ${geoCol}
+    `;
+  } else {
+    // barrio: agregamos sobre cp y mapeamos cp4 → barrio en memoria post-query
+    sql = `
+      SELECT
+        cp4 AS geo,
+        SUM(n_deudores)                                         AS n_personas,
+        SUM(n_morosos)                                          AS n_morosos,
+        SUM(n_con_pnfc)                                         AS n_con_pnfc,
+        SUM(deuda_total_miles)                                  AS deuda_total_miles,
+        SUM(deuda_mora_miles)                                   AS deuda_mora_miles,
+        SUM(deuda_pnfc_miles)                                   AS deuda_pnfc_miles,
+        SUM(deuda_mora_pnfc_miles)                              AS deuda_mora_pnfc_miles,
+        SUM(deuda_banco_miles)                                  AS deuda_banco_miles,
+        SUM(deuda_financiera_miles)                             AS deuda_financiera_miles
+      FROM 'cp.parquet'
+      ${where}
+      GROUP BY cp4
+    `;
+  }
+
+  const result = await S.conn.query(sql);
+  // Normalización HUGEINT/BIGINT → Number (Arrow JS expone HUGEINT como objeto
+  // con Symbol.toPrimitive). Sin esto, SUM(n_deudores) viene como string y
+  // las sumas posteriores rompen (n_personas:"∞", pct:0%). Bug documentado
+  // en TABLERO_DEUDAS/README.md §4.3.
+  const toNumber = (v) => {
+    if(v == null) return null;
+    if(typeof v === "number") return v;
+    if(typeof v === "bigint") return Number(v);
+    if(typeof v === "object" && v[Symbol.toPrimitive]){
+      const n = Number(v);
+      if(Number.isFinite(n)) return n;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  };
+  const rows = result.toArray().map(r => {
+    const o = {};
+    for(const k in r) o[k] = toNumber(r[k]) ?? r[k];
+    // Conservamos el geo como string (no como número) — cp4/comuna son IDs
+    if(o.geo != null) o.geo = String(o.geo);
+    return o;
+  });
+
+  const byKey = new Map();
+  if(S.gran === "barrio"){
+    // Acumular por barrio (usando mapeo cp.barrio del JSON pre-cargado)
+    const acc = new Map();
+    rows.forEach(r => {
+      const cpRow = S.byKey.cp.get(r.geo);
+      if(!cpRow) return;
+      const b = cpRow.barrio;
+      if(!acc.has(b)) acc.set(b, {n_personas:0, n_morosos:0, n_con_pnfc:0, deuda_total_miles:0, deuda_mora_miles:0, deuda_pnfc_miles:0, deuda_mora_pnfc_miles:0, deuda_banco_miles:0, deuda_financiera_miles:0});
+      const a = acc.get(b);
+      a.n_personas        += r.n_personas;
+      a.n_morosos         += r.n_morosos;
+      a.n_con_pnfc        += r.n_con_pnfc;
+      a.deuda_total_miles += r.deuda_total_miles;
+      a.deuda_mora_miles  += r.deuda_mora_miles;
+      a.deuda_pnfc_miles  += r.deuda_pnfc_miles;
+      a.deuda_mora_pnfc_miles += r.deuda_mora_pnfc_miles;
+      a.deuda_banco_miles += r.deuda_banco_miles;
+      a.deuda_financiera_miles += r.deuda_financiera_miles;
+    });
+    for(const [k,a] of acc) byKey.set(k, finalizarRow(k, a));
+  } else {
+    rows.forEach(r => {
+      const key = (S.gran === "cp") ? String(r.geo) : String(r.geo);
+      byKey.set(key, finalizarRow(key, r));
+    });
+  }
+
+  // Totales globales
+  let tot = {n_personas:0, n_morosos:0, n_con_pnfc:0, deuda_total_miles:0, deuda_mora_miles:0, deuda_pnfc_miles:0};
+  for(const v of byKey.values()){
+    tot.n_personas += v.n_personas; tot.n_morosos += v.n_morosos; tot.n_con_pnfc += v.n_con_pnfc;
+    tot.deuda_total_miles += v.deuda_total_miles; tot.deuda_mora_miles += v.deuda_mora_miles;
+    tot.deuda_pnfc_miles += v.deuda_pnfc_miles;
+  }
+  return {byKey, totales: finalizarTotales(tot)};
+}
+
+function finalizarRow(key, a){
+  return {
+    [S.gran === "comuna" ? "comuna" : (S.gran === "cp" ? "cp4" : "barrio")]: key,
+    n_personas: a.n_personas,
+    n_morosos:  a.n_morosos,
+    n_con_pnfc: a.n_con_pnfc,
+    deuda_total_miles: a.deuda_total_miles,
+    deuda_mora_miles:  a.deuda_mora_miles,
+    deuda_pnfc_miles:  a.deuda_pnfc_miles,
+    deuda_mora_pnfc_miles: a.deuda_mora_pnfc_miles || 0,
+    deuda_banco_miles: a.deuda_banco_miles || 0,
+    deuda_financiera_miles: a.deuda_financiera_miles || 0,
+    deuda_total_mm: a.deuda_total_miles / 1e3,
+    deuda_mora_mm: a.deuda_mora_miles / 1e3,
+    deuda_pnfc_mm: a.deuda_pnfc_miles / 1e3,
+    deuda_banco_mm: (a.deuda_banco_miles||0) / 1e3,
+    deuda_financiera_mm: (a.deuda_financiera_miles||0) / 1e3,
+    pct_mora_personas: a.n_personas ? 100 * a.n_morosos / a.n_personas : 0,
+    pct_mora_deuda:    a.deuda_total_miles ? 100 * a.deuda_mora_miles / a.deuda_total_miles : 0,
+    pct_personas_con_pnfc: a.n_personas ? 100 * a.n_con_pnfc / a.n_personas : 0,
+    pct_deuda_pnfc:    a.deuda_total_miles ? 100 * a.deuda_pnfc_miles / a.deuda_total_miles : 0,
+  };
+}
+
+function finalizarTotales(t){
+  return {
+    n_deudores: t.n_personas,
+    n_morosos:  t.n_morosos,
+    n_con_pnfc: t.n_con_pnfc,
+    deuda_total_mm: t.deuda_total_miles / 1e3,
+    deuda_mora_mm:  t.deuda_mora_miles / 1e3,
+    deuda_pnfc_mm:  t.deuda_pnfc_miles / 1e3,
+    pct_mora_personas: t.n_personas ? 100*t.n_morosos / t.n_personas : 0,
+    pct_mora_deuda:    t.deuda_total_miles ? 100*t.deuda_mora_miles / t.deuda_total_miles : 0,
+    pct_personas_con_pnfc: t.n_personas ? 100*t.n_con_pnfc / t.n_personas : 0,
+    pct_deuda_pnfc:    t.deuda_total_miles ? 100*t.deuda_pnfc_miles / t.deuda_total_miles : 0,
+  };
+}
+
+/* Carga el resumen del país (resto, excluyendo CABA) desde data/pais_sin_caba_resumen.json.
+   Generado por cubos_caba.py (paso 7) — agregado pre-calculado, no requiere DuckDB. */
+async function calcularPais(){
+  try {
+    const r = await fetch(DATA_DIR + "pais_sin_caba_resumen.json");
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    const pais = await r.json();
+    S.pais = {
+      n_pers: pais.n_personas,
+      n_mor:  pais.n_morosos,
+      n_pnfc: pais.n_con_pnfc,
+      pct_mora_pers:  pais.pct_mora_personas,
+      pct_mora_deuda: pais.pct_mora_deuda,
+      pct_pnfc:       pais.pct_personas_con_pnfc,
+    };
+    document.getElementById("vs-pais").innerHTML = `
+      Resto del país (sin CABA): <strong>${F.int(pais.n_personas)}</strong> deudores ·
+      <strong>${F.pct1(pais.pct_mora_personas)}</strong> mora pers ·
+      <strong>${F.pct1(pais.pct_personas_con_pnfc)}</strong> c/ PNFC.
+    `;
+    updateDeltas();
+  } catch(e){
+    console.warn("Comparativa país no disponible:", e);
+    document.getElementById("vs-pais").textContent = "Comparativa vs país: cubo nacional no encontrado (correr cubos_caba.py).";
+  }
+}
+
+function updateDeltas(){
+  if(!S.pais.n_pers) return;
+  const tot = S.data.meta.totales;
+  const setD = (id, caba, pais) => {
+    const el = document.getElementById(id);
+    if(!el || pais == null) return;
+    const d = caba - pais;
+    const arrow = d > 0 ? "▲" : (d < 0 ? "▼" : "•");
+    el.textContent = `${arrow} ${Math.abs(d).toFixed(1).replace(".",",")} pp vs país`;
+    el.className = "delta " + (d > 0 ? "up" : (d < 0 ? "dn" : ""));
+  };
+  setD("kpi-pmor-d",  tot.pct_mora_personas, S.pais.pct_mora_pers);
+  setD("kpi-pdmor-d", tot.pct_mora_deuda,    S.pais.pct_mora_deuda);
+  setD("kpi-ppnfc-d", tot.pct_personas_con_pnfc, S.pais.pct_pnfc);
+}
+
+/* ═════════════════════ RENDER KPIs ═════════════════════ */
+function renderKPIs(t){
+  document.getElementById("kpi-pers").textContent  = F.int(t.n_deudores);
+  document.getElementById("kpi-mor").textContent   = F.int(t.n_morosos);
+  document.getElementById("kpi-pmor").textContent  = F.pct1(t.pct_mora_personas);
+  document.getElementById("kpi-pdmor").textContent = F.pct1(t.pct_mora_deuda);
+  document.getElementById("kpi-deu").textContent   = F.bln(t.deuda_total_mm);
+  document.getElementById("kpi-dmor").textContent  = F.bln(t.deuda_mora_mm);
+  document.getElementById("kpi-pnfc").textContent  = F.int(t.n_con_pnfc);
+  document.getElementById("kpi-ppnfc").textContent = F.pct1(t.pct_personas_con_pnfc);
+  updateDeltas();
+}
+
+/* ═════════════════════ MAP ═════════════════════ */
+let map;
+function initMap(){
+  map = L.map("map", {zoomControl:true, attributionControl:true}).setView([-34.61, -58.435], 12);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}.png", {
+    attribution:'&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    maxZoom: 18, subdomains:"abcd",
+  }).addTo(map);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}.png", {
+    pane:"shadowPane", maxZoom:18, subdomains:"abcd", opacity:0.65
+  }).addTo(map);
+}
+
+function getGeo(){
+  if(S.gran === "comuna") return S.data.geoComuna;
+  if(S.gran === "barrio") return S.data.geoBarrio;
+  return S.data.geoCp;
+}
+function featureKey(feat){
+  if(S.gran === "comuna") return String(feat.properties.COMUNA);
+  if(S.gran === "barrio") return feat.properties.BARRIO;
+  return feat.properties.cp4;
+}
+function featureRow(feat){
+  const key = featureKey(feat);
+  if(S.gran === "comuna") return S.byKey.comuna.get(key);
+  if(S.gran === "barrio") return S.byKey.barrio.get(key);
+  return S.byKey.cp.get(key);
+}
+function featureValue(feat){ const r = featureRow(feat); return r ? r[S.metric] : null; }
+
+function buildScale(rows){
+  const def = METRICS[S.metric];
+  const vals = rows.filter(r => r && r[S.metric] != null && Number.isFinite(r[S.metric])).map(r => r[S.metric]);
+  if(!vals.length) return null;
+  const useQuantiles = (def.fmt === "int" || def.fmt === "mm");
+  const palette = SCALES[def.scale];
+  let domain;
+  if(useQuantiles){
+    domain = chroma.limits(vals, "q", 5);
+  } else {
+    const min = Math.min(...vals), max = Math.max(...vals);
+    domain = (min===max) ? [min*0.99, max*1.01 + 0.01] : [min, max];
+  }
+  return {
+    def, domain, palette, useQuantiles,
+    color(v){
+      if(v==null || !Number.isFinite(v)) return "#3a4256";
+      return chroma.scale(palette).domain(domain).mode("lab")(v).hex();
+    }
+  };
+}
+
+function styleFeat(feat){
+  const v = featureValue(feat);
+  return {
+    fillColor: S.scale ? S.scale.color(v) : "#3a4256",
+    weight: S.gran === "cp" ? 0.9 : 1.3,
+    color: "#0a0d12",
+    fillOpacity: 0.82,
+    opacity: 1,
+  };
+}
+
+function refreshLayer(){
+  const firstTime = !S.layer;
+  if(S.layer){ map.removeLayer(S.layer); S.layer = null; }
+  // Construir dataset de filas para la escala (sólo las que aparecen en el geo)
+  const geo = getGeo();
+  const rows = geo.features.map(featureRow).filter(Boolean);
+  S.scale = buildScale(rows);
+
+  S.layer = L.geoJSON(geo, {
+    style: styleFeat,
+    onEachFeature: (feat, layer) => {
+      layer.on({
+        mouseover: e => {
+          e.target.setStyle({weight:2.4, color:"#fff", fillOpacity:0.93});
+          e.target.bringToFront();
+          showTip(e, feat);
+        },
+        mouseout: e => { S.layer.resetStyle(e.target); map.closeTooltip(); },
+        click: e => {
+          const b = e.target.getBounds();
+          const targetZoom = Math.min(map.getBoundsZoom(b, false, [40,40]), 14);
+          map.flyTo(b.getCenter(), Math.max(map.getZoom(), targetZoom), {duration: 0.5});
+          renderDetail(feat);
+        }
+      });
+    }
+  }).addTo(map);
+
+  if(firstTime){
+    map.fitBounds(S.layer.getBounds(), {padding:[20,20]});
+    S.homeView = {center: map.getCenter(), zoom: map.getZoom()};
+  }
+
+  drawLegend();
+}
+
+function showTip(e, feat){
+  const row = featureRow(feat);
+  const val = featureValue(feat);
+  const def = METRICS[S.metric];
+  let name, sub;
+  if(S.gran === "comuna"){
+    name = `Comuna ${feat.properties.COMUNA}`;
+    sub = (feat.properties.BARRIOS || []).join(" · ");
+  } else if(S.gran === "barrio"){
+    name = feat.properties.BARRIO;
+    sub = `Comuna ${feat.properties.COMUNA}`;
+  } else {
+    name = `CP ${feat.properties.cp4}`;
+    sub = `${feat.properties.barrio_dom || "Sin barrio"} · Comuna ${feat.properties.comuna || "?"}`;
+    if(feat.properties.confianza_pct != null) sub += ` · conf ${feat.properties.confianza_pct.toFixed(0)}%`;
+  }
+  let html = `<div class="geo-tip">
+    <div class="tip-h">${name}</div>
+    <div class="tip-sub">${sub}</div>`;
+  if(row){
+    html += `
+      <div class="tip-r"><label>Deudores</label><span>${F.int(row.n_personas)}</span></div>
+      <div class="tip-r"><label>Morosos</label><span>${F.int(row.n_morosos)}</span></div>
+      <div class="tip-r"><label>% mora pers.</label><span>${F.pct1(row.pct_mora_personas)}</span></div>
+      <div class="tip-r"><label>% mora deuda</label><span>${F.pct1(row.pct_mora_deuda)}</span></div>
+      <div class="tip-r"><label>% con PNFC</label><span>${F.pct1(row.pct_personas_con_pnfc)}</span></div>
+      <div class="tip-metric">${def.short}: ${F.metric(val, S.metric)}</div>`;
+  } else {
+    html += `<div class="tip-r"><label>Sin datos</label></div>`;
+  }
+  html += "</div>";
+  L.tooltip({sticky:true, direction:"top", offset:[0,-8], className:"none"})
+    .setLatLng(e.latlng).setContent(html).addTo(map);
+}
+
+function goHome(){
+  if(S.homeView) map.flyTo(S.homeView.center, S.homeView.zoom, {duration: 0.5});
+  else if(S.layer) map.flyToBounds(S.layer.getBounds(), {padding:[20,20], duration: 0.5});
+}
+
+/* ═════════════════════ LEYENDA ═════════════════════ */
+function drawLegend(){
+  const el = document.getElementById("legend");
+  document.getElementById("legend-metric").textContent = METRICS[S.metric].short;
+  document.getElementById("metric-help").textContent = METRICS[S.metric].help;
+  if(!S.scale){ el.innerHTML = `<div class="legend-row" style="font-style:italic">Sin datos para esta métrica con los filtros actuales</div>`; return; }
+  const def = METRICS[S.metric];
+  const dom = S.scale.domain;
+  if(S.scale.useQuantiles){
+    const stops = [];
+    for(let i=0;i<dom.length-1;i++){
+      const mid = (dom[i] + dom[i+1])/2;
+      stops.push({ from: dom[i], to: dom[i+1], color: S.scale.color(mid) });
+    }
+    el.innerHTML = stops.map(s => `
+      <div class="legend-row">
+        <span class="legend-bar" style="background:${s.color}"></span>
+        <span>${F.any(s.from, def.fmt)} – ${F.any(s.to, def.fmt)}</span>
+      </div>`).join("") + `
+      <div class="legend-row" style="margin-top:6px">
+        <span class="legend-bar" style="background:#3a4256"></span>
+        <span style="font-style:italic">Sin datos</span>
+      </div>`;
+  } else {
+    const stops = [0, 0.25, 0.5, 0.75, 1].map(t => dom[0] + (dom[1]-dom[0])*t);
+    const gradColors = stops.map(v => S.scale.color(v)).join(",");
+    el.innerHTML = `
+      <div class="legend-gradient" style="background:linear-gradient(to right, ${gradColors})"></div>
+      <div class="legend-axis">
+        <span>${F.any(dom[0], def.fmt)}</span>
+        <span>${F.any((dom[0]+dom[1])/2, def.fmt)}</span>
+        <span>${F.any(dom[1], def.fmt)}</span>
+      </div>
+      <div class="legend-row" style="margin-top:6px">
+        <span class="legend-bar" style="background:#3a4256"></span>
+        <span style="font-style:italic">Sin datos</span>
+      </div>`;
+  }
+}
+
+/* ═════════════════════ DETAIL ═════════════════════ */
+function renderDetail(feat){
+  const row = featureRow(feat);
+  const body = document.getElementById("detail-body");
+  let name = "", sub = "", confHtml = "";
+
+  if(S.gran === "comuna"){
+    name = `Comuna ${feat.properties.COMUNA}`;
+    sub = `${(feat.properties.BARRIOS||[]).length} barrios`;
+  } else if(S.gran === "barrio"){
+    name = feat.properties.BARRIO;
+    sub = `Comuna ${feat.properties.COMUNA}`;
+  } else {
+    name = `CP ${feat.properties.cp4}`;
+    sub = `${feat.properties.barrio_dom || "Sin barrio"} · Comuna ${feat.properties.comuna || "?"}`;
+    const c = feat.properties.confianza_pct;
+    if(c != null){
+      const klass = c >= 80 ? "high" : (c >= 60 ? "med" : "low");
+      confHtml = `<span class="detail-conf ${klass}" title="Confianza del barrio dominante para este CP">conf ${c.toFixed(0)}%</span>`;
+    }
+  }
+
+  document.getElementById("detail-title").innerHTML = `${name} ${confHtml} <div style="font-size:11px;color:var(--muted);font-weight:400;margin-top:2px">${sub}</div>`;
+
+  if(!row){
+    body.innerHTML = `<div class="detail-empty">Sin datos para esta zona con los filtros aplicados.</div>`;
+    return;
+  }
+
+  const totales = S.filtrosActivos ? S.totalesFiltrados : S.data.meta.totales;
+  const sharePers = totales.n_deudores ? row.n_personas / totales.n_deudores * 100 : 0;
+  const shareDeuda = totales.deuda_total_mm ? row.deuda_total_mm / totales.deuda_total_mm * 100 : 0;
+  const shareMora = totales.deuda_mora_mm ? row.deuda_mora_mm / totales.deuda_mora_mm * 100 : 0;
+
+  let html = `
+    <div class="detail-h">Universo</div>
+    <div class="detail-row"><label>Deudores</label><span class="v">${F.int(row.n_personas)}</span></div>
+    <div class="detail-row"><label>· share CABA</label><span class="v">${F.pct1(sharePers)}</span></div>
+    <div class="detail-row"><label>Morosos</label><span class="v">${F.int(row.n_morosos)}</span></div>
+    <div class="detail-row"><label>Con PNFC</label><span class="v">${F.int(row.n_con_pnfc)}</span></div>
+
+    <div class="detail-h">Morosidad</div>
+    <div class="detail-row"><label>% mora personas</label><span class="v danger">${F.pct2(row.pct_mora_personas)}</span></div>
+    <div class="detail-row"><label>% mora deuda</label><span class="v danger">${F.pct2(row.pct_mora_deuda)}</span></div>
+    <div class="detail-row"><label>Deuda morosa</label><span class="v">${F.mm(row.deuda_mora_mm)}</span></div>
+    <div class="detail-row"><label>· share CABA</label><span class="v">${F.pct1(shareMora)}</span></div>
+
+    <div class="detail-h">PNFCs</div>
+    <div class="detail-row"><label>% pers. con PNFC</label><span class="v">${F.pct2(row.pct_personas_con_pnfc)}</span></div>
+    <div class="detail-row"><label>% deuda PNFC</label><span class="v">${F.pct2(row.pct_deuda_pnfc)}</span></div>
+    <div class="detail-row"><label>Deuda PNFCs</label><span class="v">${F.mm(row.deuda_pnfc_mm)}</span></div>
+
+    <div class="detail-h">Volumen</div>
+    <div class="detail-row"><label>Deuda total</label><span class="v">${F.mm(row.deuda_total_mm)}</span></div>
+    <div class="detail-row"><label>· share CABA</label><span class="v">${F.pct1(shareDeuda)}</span></div>
+    <div class="detail-row"><label>Deuda banco</label><span class="v">${F.mm(row.deuda_banco_mm)}</span></div>
+    <div class="detail-row"><label>Deuda financiera</label><span class="v">${F.mm(row.deuda_financiera_mm)}</span></div>
+  `;
+
+  // CPs componentes (sólo cuando NO estamos en granularidad CP)
+  if(S.gran !== "cp"){
+    let cps = [];
+    if(S.gran === "barrio") cps = S.byKey.cpByBarrio.get(feat.properties.BARRIO) || [];
+    else if(S.gran === "comuna") cps = S.data.cp.filter(c => c.comuna === feat.properties.COMUNA);
+    if(cps.length){
+      cps = cps.slice().sort((a,b) => b.n_personas - a.n_personas);
+      html += `
+        <div class="detail-h">CPs en esta zona (${cps.length})</div>
+        <div class="cp-list">
+          <table>
+            <thead><tr>
+              <th>CP · Barrio dom.</th><th>N</th><th>%Mor</th><th>%PNFC</th>
+            </tr></thead><tbody>
+            ${cps.map(c => `
+              <tr>
+                <td>${c.cp4} · ${c.barrio === "Sin clasificar" ? "<em>SD</em>" : c.barrio}</td>
+                <td>${F.int(c.n_personas)}</td>
+                <td>${F.pct1(c.pct_mora_personas)}</td>
+                <td>${F.pct1(c.pct_personas_con_pnfc)}</td>
+              </tr>`).join("")}
+          </tbody></table>
+        </div>`;
+    }
+  }
+
+  body.innerHTML = html;
+}
+
+/* ═════════════════════ FILTROS ═════════════════════ */
+function renderChips(){
+  const mount = (id, items, group) => {
+    const el = document.getElementById(id);
+    el.innerHTML = items.map(x => `
+      <span class="chip ${S.filtros[group].has(x) ? "active" : ""}" data-v="${x.replace(/"/g,'&quot;')}">${x}</span>
+    `).join("");
+    el.querySelectorAll(".chip").forEach(ch => {
+      ch.addEventListener("click", () => {
+        const v = ch.dataset.v;
+        const s = S.filtros[group];
+        if(s.has(v)) s.delete(v); else s.add(v);
+        ch.classList.toggle("active");
+        actualizarStatus();
+        triggerRecalc();
+      });
+    });
+  };
+  mount("f-sexo",  FILTRO_OPCIONES.sexo,  "sexo");
+  mount("f-edad",  FILTRO_OPCIONES.edad,  "edad");
+  mount("f-tipo",  FILTRO_OPCIONES.tipo,  "tipo");
+  mount("f-tramo", FILTRO_OPCIONES.tramo, "tramo");
+}
+
+function actualizarStatus(){
+  const total = Object.values(S.filtros).reduce((a,b) => a + b.size, 0);
+  const el = document.getElementById("filter-status");
+  if(total === 0){
+    el.textContent = "Sin filtros activos · valores agregados directos.";
+    el.className = "filter-status";
+    document.getElementById("filtros-reset").style.display = "none";
+    S.filtrosActivos = false;
+  } else {
+    el.textContent = `${total} filtro${total>1?"s":""} activo${total>1?"s":""} · recalculando vía DuckDB-WASM.`;
+    el.className = "filter-status active";
+    document.getElementById("filtros-reset").style.display = "inline";
+    S.filtrosActivos = true;
+  }
+}
+
+let recalcTimer = null;
+function triggerRecalc(){
+  clearTimeout(recalcTimer);
+  recalcTimer = setTimeout(async () => {
+    if(!S.filtrosActivos){
+      // Sin filtros → volver a los JSON originales
+      // Re-indexar desde S.data.* (ya cargado)
+      S.byKey.comuna.clear(); S.byKey.barrio.clear(); S.byKey.cp.clear(); S.byKey.cpByBarrio.clear();
+      S.data.comuna.forEach(r => S.byKey.comuna.set(String(r.comuna), r));
+      S.data.barrio.forEach(r => S.byKey.barrio.set(r.barrio, r));
+      S.data.cp.forEach(r => {
+        S.byKey.cp.set(r.cp4, r);
+        if(!S.byKey.cpByBarrio.has(r.barrio)) S.byKey.cpByBarrio.set(r.barrio, []);
+        S.byKey.cpByBarrio.get(r.barrio).push(r);
+      });
+      renderKPIs(S.data.meta.totales);
+      refreshLayer();
+      return;
+    }
+    showMapLoading(true);
+    try {
+      const {byKey, totales} = await recalcConFiltros();
+      // Sustituir el byKey de la granularidad activa
+      if(S.gran === "comuna"){
+        S.byKey.comuna.clear();
+        for(const [k,v] of byKey) S.byKey.comuna.set(k, v);
+      } else if(S.gran === "barrio"){
+        S.byKey.barrio.clear();
+        for(const [k,v] of byKey) S.byKey.barrio.set(k, v);
+      } else {
+        S.byKey.cp.clear();
+        for(const [k,v] of byKey) S.byKey.cp.set(k, v);
+      }
+      S.totalesFiltrados = totales;
+      renderKPIs(totales);
+      refreshLayer();
+    } catch(e){
+      console.error(e);
+      document.getElementById("filter-status").textContent = "Error al recalcular: " + e.message;
+    } finally {
+      showMapLoading(false);
+    }
+  }, 200);
+}
+
+/* ═════════════════════ BIND ═════════════════════ */
+function bind(){
+  // Granularidad
+  document.querySelectorAll("#gran button").forEach(b => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#gran button").forEach(x => x.classList.remove("active"));
+      b.classList.add("active");
+      S.gran = b.dataset.gran;
+      // Si hay filtros activos, recalc; si no, render directo
+      if(S.filtrosActivos) triggerRecalc(); else refreshLayer();
+    });
+  });
+  // Métrica
+  document.getElementById("metric").addEventListener("change", e => {
+    S.metric = e.target.value;
+    refreshLayer();
+  });
+  // Home
+  document.getElementById("btn-home").addEventListener("click", goHome);
+  // Filtros
+  document.getElementById("filtros-reset").addEventListener("click", () => {
+    Object.values(S.filtros).forEach(s => s.clear());
+    renderChips();
+    actualizarStatus();
+    triggerRecalc();
+  });
+  // Modal fuentes
+  document.getElementById("link-fuentes").addEventListener("click", e => {
+    e.preventDefault();
+    document.getElementById("modal-fuentes").style.display = "flex";
+  });
+  document.getElementById("modal-close").addEventListener("click", () => {
+    document.getElementById("modal-fuentes").style.display = "none";
+  });
+  document.getElementById("modal-fuentes").addEventListener("click", e => {
+    if(e.target.id === "modal-fuentes") e.target.style.display = "none";
+  });
+}
+
+/* ═════════════════════ INIT ═════════════════════ */
+(async function(){
+  try {
+    initMap();
+    await loadAll();
+    renderChips();
+    bind();
+    refreshLayer();
+    hideLoading();
+    // Comparativa país: usa el JSON resumen (no requiere DuckDB)
+    calcularPais();
+  } catch(err) {
+    console.error(err);
+    document.getElementById("init-loading").innerHTML = `
+      <div style="padding:30px;max-width:600px;color:#ef4444;font-family:monospace">
+        <h2 style="margin-bottom:14px">Error al cargar el informe</h2>
+        <pre style="white-space:pre-wrap">${err.stack || err}</pre>
+        <p style="color:#94a3b8;margin-top:14px;font-family:inherit">
+          Asegurate de servir el HTML desde un servidor local (ej:
+          <code>servir.bat</code> o <code>python -m http.server</code> en esta carpeta).
+          No funciona abriendo el archivo con file://.
+        </p>
+      </div>`;
+  }
+})();
+</script>
+
+</body>
+</html>
