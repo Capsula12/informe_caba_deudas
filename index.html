@@ -759,7 +759,7 @@ function refreshLayer(){
           e.target.bringToFront();
           showTip(e, feat);
         },
-        mouseout: e => { S.layer.resetStyle(e.target); map.closeTooltip(); },
+        mouseout: e => { S.layer.resetStyle(e.target); hideTip(); },
         click: e => {
           const b = e.target.getBounds();
           const targetZoom = Math.min(map.getBoundsZoom(b, false, [40,40]), 14);
@@ -809,8 +809,13 @@ function showTip(e, feat){
     html += `<div class="tip-r"><label>Sin datos</label></div>`;
   }
   html += "</div>";
-  L.tooltip({sticky:true, direction:"top", offset:[0,-8], className:"none"})
+  hideTip();
+  S.tip = L.tooltip({sticky:true, direction:"top", offset:[0,-8], className:"none"})
     .setLatLng(e.latlng).setContent(html).addTo(map);
+}
+
+function hideTip(){
+  if(S.tip){ map.removeLayer(S.tip); S.tip = null; }
 }
 
 function goHome(){
