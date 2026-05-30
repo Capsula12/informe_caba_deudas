@@ -8,6 +8,12 @@ Replica el canon del tablero principal (consumo puro = `prestamos − gar_pref_a
 + otros_conceptos`, PF vivas, `gar_pref_b = 0`, cartera ∈ `CONSUMO_VIV / PNFC`,
 provincia ARCA = `'00'`).
 
+> **Período activo: `202604` (datos a abril 2026, fecha ref. edad `2026-04-30`).**
+> El período no está hardcodeado: `cubos_caba.py` lo lee de la tabla `metadata`
+> de `consolidado.duckdb` y el `index.html` lo toma de `caba_metadata.json`.
+> Para actualizar a un mes nuevo basta reindexar el consolidado del repo padre y
+> volver a correr `cubos_caba.py` (ver "Actualizar el período" abajo).
+
 
 ## Cómo abrir el informe
 
@@ -57,7 +63,19 @@ Y abrir [http://localhost:8766/](http://localhost:8766/).
                 index.html  ← consume todo lo de arriba + 2 geojson (barrios, comunas)
 ```
 
-Para regenerar todo (~3 min):
+### Actualizar el período (refresh de datos, ~1 min)
+
+El mapeo CP→barrio (`armar_cp_barrio.py`) y los polígonos (`armar_poligonos_cp.py`)
+son **geográficos y no dependen del mes**. Para un cambio de período sólo hace
+falta el último paso, que lee el período activo de `consolidado.duckdb`:
+```
+python Otras/Informe_CABA/cubos_caba.py    # corre desde el repo padre
+```
+Esto regenera todos los `data/*.parquet|json` (cubos, métricas, metadata y
+`pais_sin_caba_resumen.json`). El `index.html` toma el período nuevo de
+`caba_metadata.json` automáticamente — no hay que tocar el HTML.
+
+### Regenerar todo desde cero (incluye geografía, ~3 min)
 ```
 python armar_cp_barrio.py        # mapeo CP→barrio
 python armar_poligonos_cp.py     # polígonos CP4
@@ -226,16 +244,50 @@ el lado de la calle). No los recortamos para que el mapa refleje esa realidad.
 el mismo canon pero con `p.provincia <> '00'`. Da el agregado nacional
 **sin** CABA, que el HTML usa para mostrar deltas en cada KPI.
 
-Resultado típico (202603):
+Resultado a **202604** (abril 2026):
 | Métrica | CABA | Resto país | Delta |
 |---|---:|---:|---:|
-| Personas con consumo > 0 | 2.001.382 | 18.276.136 | — |
-| % personas en mora | 15,1% | 27,4% | **-12,3 pp** ✓ |
-| % monto en mora | 17,2% | 21,7% | **-4,5 pp** ✓ |
-| % personas con PNFC | 42,0% | 63,9% | **-21,9 pp** ✓ |
+| Personas con consumo > 0 | 2.005.886 | 18.345.821 | — |
+| % personas en mora | 15,6% | 28,2% | **-12,6 pp** ✓ |
+| % monto en mora | 18,3% | 22,8% | **-4,5 pp** ✓ |
+| % personas con PNFC | 42,7% | 64,2% | **-21,5 pp** ✓ |
 
 CABA tiene niveles de morosidad y dependencia de PNFCs significativamente
 menores que el resto del país.
+
+
+## Git, branches y deploy
+
+Este informe vive en su **propio repositorio** (no es parte del repo padre
+`deudas_analisis`), con remoto en
+[Capsula12/informe_caba_deudas](https://github.com/Capsula12/informe_caba_deudas).
+
+Dos branches que **se mantienen en espejo**:
+
+| Branch  | Uso |
+|---|---|
+| `main`  | Rama de trabajo / referencia. |
+| `index` | Rama que sirve la **GitHub Page**. En general coincide 1:1 con `main`. |
+
+**Flujo de actualización de período** (después de correr `cubos_caba.py`):
+
+```bash
+# desde Otras/Informe_CABA, parado en main
+git add -A
+git commit -m "Update datos CABA a <PERIODO>"
+git push origin main
+
+# espejar index a main y publicar
+git checkout index
+git merge --ff-only main      # index suele ser ancestro de main → fast-forward
+git push origin index
+git checkout main             # volver a la rama de trabajo
+```
+
+> `data/deudores_caba.parquet` (CUILs) está en `.gitignore` y **no se commitea**.
+> Todo lo demás bajo `data/` (cubos, métricas, metadata) sí se versiona para que
+> la GitHub Page tenga los datos sin pipeline. Si `index` y `main` divergen
+> (p. ej. un fix sólo en una), resolver con `git merge` en vez de `--ff-only`.
 
 
 ## Privacidad
