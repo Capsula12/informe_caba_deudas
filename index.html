@@ -281,27 +281,23 @@ select:focus{outline:none;border-color:var(--accent)}
     </ul>
 
     <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Construcción del mapeo CP → barrio → comuna</h3>
-    <p style="color:var(--muted)">El código postal en CABA es una zona de cartero y NO calza 1:1 con barrios oficiales. Construimos un mapeo empírico:</p>
+    <p style="color:var(--muted)">El código postal en CABA es una zona de cartero y NO calza 1:1 con barrios oficiales: un mismo CP4 suele cubrir varios barrios. Construimos un mapeo empírico y <strong>repartimos</strong> los datos de cada CP entre sus barrios:</p>
     <ol style="margin:6px 0 6px 18px;color:var(--muted)">
-      <li>Para cada calle del CPA en CABA, buscamos su equivalente en el callejero GCBA. <strong>Match exacto</strong>: 1.359 (66%); <strong>match por apellido</strong>: 217 (10%); <strong>sin match</strong>: 492 (24%).</li>
+      <li>Para cada calle del CPA en CABA, buscamos su equivalente en el callejero GCBA. <strong>Match exacto</strong>: 1.359 (66%); <strong>por apellido</strong>: 430 (21%); <strong>por tokens</strong>: 53 (3%); <strong>sin match</strong>: 226 (11%).</li>
       <li>Para cada par <code>(calle, altura)</code> del CPA, intersectamos con los segmentos del callejero. <em>Si el callejero no informa altura (segmentos 0-0), se descarta el voto</em> para evitar votos espurios en avenidas largas (Av. del Libertador, etc.).</li>
-      <li>Cada segmento del callejero que solapa aporta un voto al barrio del lado par e impar (mitad y mitad si difieren), ponderado por la fracción del rango del callejero cubierta.</li>
-      <li>El barrio dominante por CP4 = max(votos). El porcentaje de confianza = votos_dominante / votos_total.</li>
-      <li>Cada barrio CABA pertenece a una sola comuna (relación fija del GeoJSON oficial). Joineamos para obtener CP4 → comuna.</li>
-      <li>Para CPs sin calles en el dataset CPA (típicamente casillas postales de oficinas Microcentro), aplicamos overrides manuales documentados en <code>data/cp_comuna_override.csv</code>.</li>
+      <li>Cada segmento del callejero que solapa aporta un voto al barrio del lado par e impar (mitad y mitad si difieren), ponderado por la fracción del rango del callejero cubierta. Eso da, por CP4, el <strong>peso de cada barrio</strong>.</li>
+      <li><strong>Reparto proporcional (areal interpolation):</strong> los agregados de cada CP (personas, deuda, mora, PNFC) se distribuyen entre sus barrios según esos pesos, en vez de asignar todo al barrio dominante. Así se pueblan los <strong>48 barrios</strong> y se conservan los totales. Lo mismo para comuna.</li>
+      <li>Cada barrio CABA pertenece a una sola comuna (relación fija del GeoJSON oficial). Para CPs sin calles en el CPA (casillas postales del Microcentro) se usan overrides en <code>data/cp_comuna_override.csv</code>.</li>
     </ol>
-    <p style="color:var(--muted);margin-top:6px">Resultado: <strong>284 CPs mapeados</strong> (260 derivados + 24 overrides), cobertura <strong>94.2%</strong> de las personas CABA con consumo en el padrón. Los polígonos por CP4 se generan en <code>armar_poligonos_cp.py</code> haciendo buffer 60m alrededor de las LINESTRING del callejero y union.</p>
+    <p style="color:var(--muted);margin-top:6px">Resultado: <strong>291 CPs mapeados</strong> (279 derivados + 12 overrides), cobertura <strong>94.3%</strong> de las personas CABA con consumo en el padrón. Los pesos por CP están en <code>data/cp_barrio_weights.json</code> (los usa también el navegador para repartir bajo filtros) y el detalle completo en <code>data/cp_barrio_detalle.csv</code>.</p>
 
-    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Confianza del mapeo</h3>
-    <p style="color:var(--muted)">Cada CP tiene un <em>confianza_pct</em> (cuán claro es su barrio dominante):</p>
+    <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Naturaleza estimada de los valores por barrio</h3>
+    <p style="color:var(--muted)">Como el padrón BCRA guarda sólo el CP de 4 dígitos por persona, no es posible ubicar a cada individuo en un barrio exacto dentro de su CP. Los valores por <strong>barrio y comuna son estimaciones por reparto</strong> (no recuentos directos); los valores por <strong>CP4 sí son exactos</strong>. El chip de confianza del panel "Detalle por zona" indica cuán concentrado está cada CP en un solo barrio:</p>
     <ul style="margin:6px 0 6px 18px;color:var(--muted)">
-      <li>≥95%: 116 CPs — barrio claramente identificado.</li>
-      <li>80-95%: 23 CPs — barrio dominante claro.</li>
-      <li>60-80%: 51 CPs — barrio dominante razonable.</li>
-      <li>40-60%: 63 CPs — barrio dominante débil (marcados AMBIGUO).</li>
-      <li>&lt;40%: 7 CPs — muy ambiguo, el CP cubre múltiples barrios.</li>
+      <li><span style="color:var(--ok)">≥80%</span>: el CP es casi todo un barrio — el reparto es prácticamente directo.</li>
+      <li><span style="color:#e0a030">60-80%</span>: un barrio domina pero otros contribuyen.</li>
+      <li><span style="color:#e05555">&lt;60%</span>: el CP cubre genuinamente varios barrios — el reparto distribuye entre ellos según peso.</li>
     </ul>
-    <p style="color:var(--muted);margin-top:6px">En el panel "Detalle por zona" se muestra la confianza específica del CP seleccionado. El detalle completo (todos los barrios candidatos por CP) está en <code>data/cp_barrio_detalle.csv</code>.</p>
 
     <h3 style="font-size:13px;color:var(--accent-2);margin-top:14px;text-transform:uppercase;letter-spacing:0.5px">Notas y limitaciones</h3>
     <ul style="margin:6px 0 6px 18px;color:var(--muted)">
@@ -396,16 +392,21 @@ async function loadJSON(path){ const r = await fetch(path); if(!r.ok) throw new 
 
 async function loadAll(){
   setLoading("Cargando geografía y métricas…");
-  const [meta, comuna, barrio, cp, geoCom, geoBar, geoCp] = await Promise.all([
+  const [meta, comuna, barrio, cp, weights, geoCom, geoBar, geoCp] = await Promise.all([
     loadJSON(DATA_DIR + "caba_metadata.json"),
     loadJSON(DATA_DIR + "comuna_metrics.json"),
     loadJSON(DATA_DIR + "barrio_metrics.json"),
     loadJSON(DATA_DIR + "cp_metrics.json"),
+    loadJSON(DATA_DIR + "cp_barrio_weights.json"),
     loadJSON(GEO_DIR + "comunas.geojson"),
     loadJSON(GEO_DIR + "barrios.geojson"),
     loadJSON(GEO_DIR + "cps.geojson"),
   ]);
   S.data = {comuna, barrio, cp, meta, geoComuna:geoCom, geoBarrio:geoBar, geoCp};
+  // Reparto CP4 → [[barrio, comuna, frac], ...] (areal interpolation). Cada CP se
+  // reparte entre sus barrios según el peso del solape calle×altura. Los CPs no
+  // mapeados (no están acá) caen en 'Sin clasificar' / comuna 0 al agregar.
+  S.cpWeights = weights;
 
   // Agregar columnas derivadas (deuda_*_mm)
   function addMM(arr){
@@ -455,8 +456,10 @@ async function ensureDuckDB(){
     const buf = await fetch(DATA_DIR + file).then(r => r.arrayBuffer());
     await db.registerFileBuffer(name, new Uint8Array(buf));
   };
+  // Sólo el cubo por CP4 (atómico y exacto). Barrio y comuna se derivan de éste
+  // repartiendo cada CP con S.cpWeights — así barrio y comuna son consistentes y
+  // se pueblan los 48 barrios (no hay cubo_comuna winner-take-all).
   await loadParquet("cubo_cp.parquet",     "cp.parquet");
-  await loadParquet("cubo_comuna.parquet", "comuna.parquet");
   S.duckdb = db; S.conn = conn;
 }
 
@@ -478,32 +481,10 @@ function buildWhere(){
 async function recalcConFiltros(){
   await ensureDuckDB();
   const where = buildWhere();
-  const geoCol = (S.gran === "cp" ? "cp4" : (S.gran === "comuna" ? "comuna" : null));
-
-  // Para granularidad "barrio", usamos cubo_cp + join con tabla in-memory de cp4→barrio
-  let sql;
-  if(geoCol){
-    const tabla = S.gran === "cp" ? "cp.parquet" : "comuna.parquet";
-    sql = `
-      SELECT
-        ${geoCol} AS geo,
-        COUNT(*)                                                AS n_personas_groups,
-        SUM(n_deudores)                                         AS n_personas,
-        SUM(n_morosos)                                          AS n_morosos,
-        SUM(n_con_pnfc)                                         AS n_con_pnfc,
-        SUM(deuda_total_miles)                                  AS deuda_total_miles,
-        SUM(deuda_mora_miles)                                   AS deuda_mora_miles,
-        SUM(deuda_pnfc_miles)                                   AS deuda_pnfc_miles,
-        SUM(deuda_mora_pnfc_miles)                              AS deuda_mora_pnfc_miles,
-        SUM(deuda_banco_miles)                                  AS deuda_banco_miles,
-        SUM(deuda_financiera_miles)                             AS deuda_financiera_miles
-      FROM '${tabla}'
-      ${where}
-      GROUP BY ${geoCol}
-    `;
-  } else {
-    // barrio: agregamos sobre cp y mapeamos cp4 → barrio en memoria post-query
-    sql = `
+  // Sólo "cp" agrupa directo. "barrio" y "comuna" se derivan del cubo_cp por CP4
+  // y luego se reparten en memoria con S.cpWeights (areal interpolation).
+  const directCp = (S.gran === "cp");
+  const sql = `
       SELECT
         cp4 AS geo,
         SUM(n_deudores)                                         AS n_personas,
@@ -519,7 +500,6 @@ async function recalcConFiltros(){
       ${where}
       GROUP BY cp4
     `;
-  }
 
   const result = await S.conn.query(sql);
   // Normalización HUGEINT/BIGINT → Number (Arrow JS expone HUGEINT como objeto
@@ -546,31 +526,31 @@ async function recalcConFiltros(){
   });
 
   const byKey = new Map();
-  if(S.gran === "barrio"){
-    // Acumular por barrio (usando mapeo cp.barrio del JSON pre-cargado)
+  if(directCp){
+    rows.forEach(r => byKey.set(String(r.geo), finalizarRow(String(r.geo), r)));
+  } else {
+    // barrio / comuna: repartir cada CP entre sus barrios/comunas con S.cpWeights
+    // (mismo criterio que el pipeline offline → totales conservados, 48 barrios).
     const acc = new Map();
+    const M = ["n_personas","n_morosos","n_con_pnfc","deuda_total_miles","deuda_mora_miles",
+               "deuda_pnfc_miles","deuda_mora_pnfc_miles","deuda_banco_miles","deuda_financiera_miles"];
+    const addInto = (key, r, frac) => {
+      if(!acc.has(key)) acc.set(key, Object.fromEntries(M.map(m => [m, 0])));
+      const a = acc.get(key);
+      for(const m of M) a[m] += (r[m] || 0) * frac;
+    };
     rows.forEach(r => {
-      const cpRow = S.byKey.cp.get(r.geo);
-      if(!cpRow) return;
-      const b = cpRow.barrio;
-      if(!acc.has(b)) acc.set(b, {n_personas:0, n_morosos:0, n_con_pnfc:0, deuda_total_miles:0, deuda_mora_miles:0, deuda_pnfc_miles:0, deuda_mora_pnfc_miles:0, deuda_banco_miles:0, deuda_financiera_miles:0});
-      const a = acc.get(b);
-      a.n_personas        += r.n_personas;
-      a.n_morosos         += r.n_morosos;
-      a.n_con_pnfc        += r.n_con_pnfc;
-      a.deuda_total_miles += r.deuda_total_miles;
-      a.deuda_mora_miles  += r.deuda_mora_miles;
-      a.deuda_pnfc_miles  += r.deuda_pnfc_miles;
-      a.deuda_mora_pnfc_miles += r.deuda_mora_pnfc_miles;
-      a.deuda_banco_miles += r.deuda_banco_miles;
-      a.deuda_financiera_miles += r.deuda_financiera_miles;
+      const ws = S.cpWeights[r.geo];
+      if(ws && ws.length){
+        for(const [barrio, comuna, frac] of ws){
+          addInto(S.gran === "barrio" ? barrio : String(comuna), r, frac);
+        }
+      } else {
+        // CP no mapeado → Sin clasificar / comuna 0
+        addInto(S.gran === "barrio" ? "Sin clasificar" : "0", r, 1);
+      }
     });
     for(const [k,a] of acc) byKey.set(k, finalizarRow(k, a));
-  } else {
-    rows.forEach(r => {
-      const key = (S.gran === "cp") ? String(r.geo) : String(r.geo);
-      byKey.set(key, finalizarRow(key, r));
-    });
   }
 
   // Totales globales
