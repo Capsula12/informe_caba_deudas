@@ -25,9 +25,10 @@
 ║      deudores_caba.parquet         1 fila por persona CABA                  ║
 ║    PUBLICABLES (anonimizados):                                              ║
 ║      cubo_cp.parquet               cubo agregado por CP × dimensiones       ║
-║      cubo_comuna.parquet           cubo agregado por comuna × dimensiones   ║
-║      cp_metrics.parquet            métricas resumidas por CP (1 fila/CP)    ║
-║      comuna_metrics.parquet        métricas resumidas por comuna (1/comuna) ║
+║      cp_barrio_weights.json        reparto CP4 → [(barrio, comuna, frac)]   ║
+║      cp_metrics.parquet            métricas por CP (exactas, 1 fila/CP)     ║
+║      barrio_metrics.parquet        métricas por barrio (reparto proporc.)   ║
+║      comuna_metrics.parquet        métricas por comuna (reparto proporc.)   ║
 ║      caba_metadata.json            período, totales, listas para filtros    ║
 ║                                                                              ║
 ║  Uso:                                                                        ║
@@ -44,6 +45,7 @@ import csv
 import calendar
 from pathlib import Path
 from datetime import datetime
+from collections import defaultdict
 
 import duckdb
 
@@ -63,6 +65,7 @@ OUT_DIR           = SCRIPT_DIR / "Otras" / "Informe_CABA"
 DATA_DIR          = OUT_DIR / "data"
 ENT_FIN_FILE      = SCRIPT_DIR / "entidades_financieras.txt"
 CP_COMUNA_CSV     = DATA_DIR / "cp_comuna.csv"
+CP_DETALLE_CSV    = DATA_DIR / "cp_barrio_detalle.csv"   # distribución CP×barrio (pesos)
 
 EDAD_MAX_VALIDA   = 119
 
@@ -115,6 +118,15 @@ def cargar_financieras():
         sys.exit(f"ERROR: {ENT_FIN_FILE} no contiene códigos numéricos.")
     return codigos
 
+# El callejero GCBA nombra "LA BOCA"; el geo/barrios.geojson (que pinta el
+# choropleth) usa "BOCA". Canonicalizamos los nombres de barrio a la convención
+# del geojson para que metrics/weights calcen con feat.properties.BARRIO.
+_BARRIO_CANON = {"LA BOCA": "BOCA"}
+
+def _canon_barrio(b):
+    return _BARRIO_CANON.get((b or "").upper(), (b or "").upper())
+
+
 def cargar_cp_comuna():
     """Lee data/cp_comuna.csv → lista de dicts {cp4, barrio, comuna}."""
     if not CP_COMUNA_CSV.exists():
@@ -128,10 +140,60 @@ def cargar_cp_comuna():
                 continue
             rows.append({
                 "cp4":    cp,
-                "barrio": row["barrio"].strip(),
+                "barrio": _canon_barrio(row["barrio"].strip()),
                 "comuna": int(row["comuna"]),
             })
     return rows
+
+
+def cargar_cp_weights(cp_rows):
+    """
+    Construye el reparto proporcional CP4 → [(barrio, comuna, frac)].
+
+    Cada CP4 en CABA cubre, en general, VARIOS barrios (el CP es zona de cartero,
+    no calza 1:1 con barrios). El winner-take-all (asignar todo el CP al barrio
+    dominante) deja en CERO los barrios que nunca ganan ningún CP. En su lugar
+    REPARTIMOS los agregados de cada CP entre sus barrios según el peso del solape
+    calle×altura que ya calcula armar_cp_barrio.py (data/cp_barrio_detalle.csv).
+    Es la técnica estándar de areal interpolation: conserva los totales y es
+    insesgada si los pesos ≈ share real de direcciones por barrio.
+
+    · CPs con detalle (derivados de datos): fracciones = pct/Σpct (normalizadas a 1).
+    · CPs override (casillas postales, sin calles en CPA): 1 solo barrio, frac=1
+      (tomado de cp_comuna.csv).
+    · CPs presentes en los datos pero sin mapeo: el caller los manda a
+      'Sin clasificar' (comuna 0) vía COALESCE — no hace falta listarlos acá.
+
+    Devuelve dict cp4 -> [{"barrio","comuna","frac"}, ...] con Σfrac == 1.
+    """
+    weights = defaultdict(list)
+    if CP_DETALLE_CSV.exists():
+        crudo = defaultdict(list)
+        with CP_DETALLE_CSV.open(encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                cp = (row.get("cp4") or "").strip()
+                if not cp or len(cp) != 4 or not cp.isdigit():
+                    continue
+                try:
+                    peso = float(row.get("peso") or 0)
+                except ValueError:
+                    peso = 0.0
+                crudo[cp].append((_canon_barrio(row["barrio"].strip()),
+                                  int(row["comuna"] or 0), peso))
+        for cp, items in crudo.items():
+            tot = sum(p for _, _, p in items)
+            if tot <= 0:
+                continue
+            for b, com, p in items:
+                weights[cp].append({"barrio": b, "comuna": com, "frac": p / tot})
+
+    # Overrides / CPs sin detalle: van enteros a su único barrio de cp_comuna.csv
+    for r in cp_rows:
+        if r["cp4"] not in weights:
+            weights[r["cp4"]] = [{"barrio": _canon_barrio(r["barrio"]),
+                                  "comuna": r["comuna"], "frac": 1.0}]
+    return dict(weights)
+
 
 def get_fecha_ref(periodo):
     yyyy = int(periodo[:4])
@@ -411,6 +473,86 @@ def export_metrics_resumen(con, out_dir, fname, geo_cols):
     return f_pq, n, sz
 
 
+def export_metrics_apportioned(con, out_dir, fname, geo_col):
+    """
+    1 fila por unidad geográfica (barrio o comuna) con métricas REPARTIDAS
+    proporcionalmente desde cada CP4 según t_cp_weights (areal interpolation).
+
+    A diferencia de export_metrics_resumen (winner-take-all sobre t_personas),
+    acá cada persona aporta su métrica × frac a CADA barrio de su CP4. Así se
+    pueblan los 48 barrios y los totales se conservan (Σfrac por persona = 1).
+    Las personas con CP no mapeado caen en 'Sin clasificar' (comuna 0) vía el
+    LEFT JOIN + COALESCE con frac=1.
+
+    geo_col: 'barrio' (agrupa por barrio+comuna) o 'comuna'.
+    """
+    if geo_col == "barrio":
+        geo_sel = "COALESCE(w.barrio, 'Sin clasificar') AS barrio, COALESCE(w.comuna, 0) AS comuna"
+        group_by = "1, 2"
+    else:  # comuna
+        geo_sel = "COALESCE(w.comuna, 0) AS comuna"
+        group_by = "1"
+    f_pq   = out_dir / fname
+    f_json = out_dir / (fname.replace(".parquet", ".json"))
+    # frac efectivo: 1 si el CP no está en weights (Sin clasificar)
+    fr = "COALESCE(w.frac, 1.0)"
+    sql = f"""
+        SELECT
+            {geo_sel},
+            CAST(ROUND(SUM({fr}), 0) AS BIGINT)                          AS n_personas,
+            CAST(ROUND(SUM(p.es_moroso        * {fr}), 0) AS BIGINT)     AS n_morosos,
+            CAST(ROUND(SUM(p.tiene_pnfc       * {fr}), 0) AS BIGINT)     AS n_con_pnfc,
+            CAST(ROUND(SUM(p.tiene_banco      * {fr}), 0) AS BIGINT)     AS n_con_banco,
+            CAST(ROUND(SUM(p.tiene_financiera * {fr}), 0) AS BIGINT)     AS n_con_financiera,
+            ROUND(SUM(p.consumo_total       * {fr}), 1)                  AS deuda_total_miles,
+            ROUND(SUM(p.consumo_mora        * {fr}), 1)                  AS deuda_mora_miles,
+            ROUND(SUM(p.consumo_banco       * {fr}), 1)                  AS deuda_banco_miles,
+            ROUND(SUM(p.consumo_financiera  * {fr}), 1)                  AS deuda_financiera_miles,
+            ROUND(SUM(p.consumo_pnfc        * {fr}), 1)                  AS deuda_pnfc_miles,
+            ROUND(SUM(p.consumo_mora_pnfc   * {fr}), 1)                  AS deuda_mora_pnfc_miles,
+            ROUND(100.0 * SUM(p.es_moroso  * {fr}) / NULLIF(SUM({fr}),0), 2)          AS pct_mora_personas,
+            ROUND(100.0 * SUM(p.consumo_mora * {fr}) / NULLIF(SUM(p.consumo_total * {fr}),0), 2) AS pct_mora_deuda,
+            ROUND(100.0 * SUM(p.tiene_pnfc * {fr}) / NULLIF(SUM({fr}),0), 2)          AS pct_personas_con_pnfc,
+            ROUND(100.0 * SUM(p.consumo_pnfc * {fr}) / NULLIF(SUM(p.consumo_total * {fr}),0), 2) AS pct_deuda_pnfc
+        FROM t_personas p
+        LEFT JOIN t_cp_weights w ON w.cp4 = p.cp4
+        GROUP BY {group_by}
+    """
+    con.execute(f"COPY ({sql}) TO '{f_pq.as_posix()}' (FORMAT 'parquet', COMPRESSION 'zstd')")
+    rows_df = con.execute(sql).df()
+    payload = []
+    for rec in rows_df.to_dict(orient="records"):
+        out = {}
+        for k, v in rec.items():
+            if v is None or (isinstance(v, float) and (v != v)):
+                out[k] = None
+            elif hasattr(v, "item"):
+                out[k] = v.item()
+            else:
+                out[k] = v
+        payload.append(out)
+    f_json.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    n  = con.execute(f"SELECT COUNT(*) FROM read_parquet('{f_pq.as_posix()}')").fetchone()[0]
+    sz = f_pq.stat().st_size / 1e3
+    return f_pq, n, sz
+
+
+def export_cp_barrio_weights(out_dir, weights):
+    """
+    Escribe data/cp_barrio_weights.json para que el browser reparta los CPs entre
+    barrios/comunas igual que el pipeline offline. Formato compacto:
+        { "1407": [["PARQUE AVELLANEDA", 9, 0.2921], ["FLORESTA", 10, 0.2017], ...] }
+    Sólo CPs mapeados; los no mapeados el frontend los manda a 'Sin clasificar'.
+    """
+    f = out_dir / "cp_barrio_weights.json"
+    compact = {
+        cp: [[w["barrio"], w["comuna"], round(w["frac"], 4)] for w in items]
+        for cp, items in sorted(weights.items())
+    }
+    f.write_text(json.dumps(compact, ensure_ascii=False), encoding="utf-8")
+    return f, len(compact)
+
+
 def export_metadata(con, out_dir, periodo, fecha_ref, t_total, cp_mapping_rows,
                     sin_clasificar_count):
     """JSON con totales globales y listas auxiliares para llenar selectores."""
@@ -489,10 +631,12 @@ def export_metadata(con, out_dir, periodo, fecha_ref, t_total, cp_mapping_rows,
             "mora":      "situacion >= 3, criterio del peor clasificador a nivel persona.",
             "pnfc":      "Proveedor No Financiero de Crédito = entidad que no es banco (cod 00...) ni financiera regulada. Una persona 'tiene PNFC' si tiene ≥1 vínculo con tipo_entidad='pnfc'.",
             "cp_a_comuna": (
-                "El mapeo CP4 → barrio → comuna se basa en zonas postales estándar de CABA "
-                "(data/cp_comuna.csv). Es una aproximación: en CABA un mismo CP4 puede cubrir "
-                "varios barrios, pero suele tener UNO predominante. Las personas con CP no "
-                "mapeado quedan agrupadas en comuna=0 (Sin clasificar)."
+                "En CABA un mismo CP4 suele cubrir VARIOS barrios. Los datos de cada CP se "
+                "REPARTEN entre sus barrios según el peso del solape calle×altura "
+                "(areal interpolation, data/cp_barrio_weights.json) — no se asignan a un único "
+                "barrio dominante. Los valores por CP4 son exactos; los de barrio y comuna son "
+                "estimaciones por reparto (conservan los totales). Las personas con CP no "
+                "mapeado quedan en comuna=0 (Sin clasificar)."
             ),
             "geo_match": f"{tot[0] - sin_clasificar_count:,} de {tot[0]:,} personas matchearon un CP del mapping ({100.0*(tot[0]-sin_clasificar_count)/tot[0]:.1f}%).",
         },
@@ -538,6 +682,8 @@ def main():
 
     cp_rows = cargar_cp_comuna()
     print(f"  Mapeo CP4 → comuna:    {len(cp_rows)} CPs en {CP_COMUNA_CSV.name}")
+    cp_weights = cargar_cp_weights(cp_rows)
+    print(f"  Reparto CP4 → barrios: {len(cp_weights)} CPs con distribución (areal interpolation)")
 
     # ── 1. t_base ────────────────────────────────────────────────────────────
     paso(1, "Construyendo t_base (JOIN deudores × padron, CABA, PF vivos)")
@@ -558,6 +704,17 @@ def main():
     )
     n_map = con.execute("SELECT COUNT(*) FROM t_cp_mapping").fetchone()[0]
     t0 = tick(t0, f"{n_map} CPs en mapping")
+
+    # Tabla de reparto proporcional CP4 → (barrio, comuna, frac) — para barrio/comuna
+    con.execute("DROP TABLE IF EXISTS t_cp_weights")
+    con.execute("CREATE TEMP TABLE t_cp_weights (cp4 VARCHAR(4), barrio VARCHAR, comuna SMALLINT, frac DOUBLE)")
+    con.executemany(
+        "INSERT INTO t_cp_weights VALUES (?, ?, ?, ?)",
+        [(cp, w["barrio"], w["comuna"], w["frac"])
+         for cp, items in cp_weights.items() for w in items],
+    )
+    n_w = con.execute("SELECT COUNT(*) FROM t_cp_weights").fetchone()[0]
+    t0 = tick(t0, f"{n_w} pares (cp,barrio) en t_cp_weights")
 
     # ── 3. t_personas ────────────────────────────────────────────────────────
     paso(3, "Agregando a nivel persona → t_personas (HAVING consumo>0)")
@@ -591,8 +748,10 @@ def main():
     t0 = time.time()
     f_cp,   n_cp,   sz_cp   = export_cubo(con, DATA_DIR, "cubo_cp.parquet",    "cp4")
     t0 = tick(t0, f"cubo_cp.parquet ({n_cp:,} filas, {sz_cp:.2f} MB)")
-    f_com,  n_com,  sz_com  = export_cubo(con, DATA_DIR, "cubo_comuna.parquet","comuna")
-    t0 = tick(t0, f"cubo_comuna.parquet ({n_com:,} filas, {sz_com:.2f} MB)")
+    # El cubo por barrio/comuna se deriva del cubo_cp + reparto en el browser
+    # (cp_barrio_weights.json), así que NO se genera un cubo_comuna winner-take-all.
+    f_w, n_w_json = export_cp_barrio_weights(DATA_DIR, cp_weights)
+    t0 = tick(t0, f"cp_barrio_weights.json ({n_w_json} CPs, {f_w.stat().st_size/1e3:.1f} KB)")
 
     # ── 6. Métricas resumidas (1 fila por geo) ──────────────────────────────
     paso(6, "Generando métricas resumidas por CP, barrio y comuna (1 fila por unidad)")
@@ -601,14 +760,14 @@ def main():
         con, DATA_DIR, "cp_metrics.parquet", ["cp4", "barrio", "comuna"]
     )
     t0 = tick(t0, f"cp_metrics.{{parquet,json}} ({n_cm_cp} CPs, {sz_cm_cp:.1f} KB)")
-    f_cm_bar, n_cm_bar, sz_cm_bar = export_metrics_resumen(
-        con, DATA_DIR, "barrio_metrics.parquet", ["barrio", "comuna"]
+    f_cm_bar, n_cm_bar, sz_cm_bar = export_metrics_apportioned(
+        con, DATA_DIR, "barrio_metrics.parquet", "barrio"
     )
-    t0 = tick(t0, f"barrio_metrics.{{parquet,json}} ({n_cm_bar} barrios, {sz_cm_bar:.1f} KB)")
-    f_cm_com, n_cm_com, sz_cm_com = export_metrics_resumen(
-        con, DATA_DIR, "comuna_metrics.parquet", ["comuna"]
+    t0 = tick(t0, f"barrio_metrics.{{parquet,json}} ({n_cm_bar} barrios, {sz_cm_bar:.1f} KB) — reparto proporcional")
+    f_cm_com, n_cm_com, sz_cm_com = export_metrics_apportioned(
+        con, DATA_DIR, "comuna_metrics.parquet", "comuna"
     )
-    t0 = tick(t0, f"comuna_metrics.{{parquet,json}} ({n_cm_com} comunas, {sz_cm_com:.1f} KB)")
+    t0 = tick(t0, f"comuna_metrics.{{parquet,json}} ({n_cm_com} comunas, {sz_cm_com:.1f} KB) — reparto proporcional")
 
     # ── 7. Cubo "país sin CABA" (para comparativa) ───────────────────────────
     paso(7, "Generando cubo país sin CABA (para comparativa en el HTML)")
@@ -686,7 +845,7 @@ def main():
             print(f"    {fn:<32s} {f.stat().st_size/1e6:>8.1f} MB")
     print()
     print("  PUBLICABLES (anonimizados):")
-    for fn in ["cubo_cp.parquet", "cubo_comuna.parquet",
+    for fn in ["cubo_cp.parquet", "cp_barrio_weights.json",
                "cp_metrics.parquet", "cp_metrics.json",
                "barrio_metrics.parquet", "barrio_metrics.json",
                "comuna_metrics.parquet", "comuna_metrics.json",

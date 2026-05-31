@@ -43,24 +43,26 @@ Y abrir [http://localhost:8766/](http://localhost:8766/).
                  ├─ data/localidad.CSV        ┘
                  │
                  ▼
-   armar_cp_barrio.py  →  data/cp_comuna.csv          ← mapeo CP4 → barrio → comuna
-                          data/cp_barrio_detalle.csv   ← TODA la distribución (auditoría)
+   armar_cp_barrio.py  →  data/cp_comuna.csv          ← mapeo CP4 → barrio dominante → comuna
+                          data/cp_barrio_detalle.csv   ← TODA la distribución CP×barrio (pesos)
                  │
                  ▼
    armar_poligonos_cp.py → geo/cps.geojson             ← 255 polígonos por CP4 derivados
                  │                                         del callejero (buffer 60m + union)
                  ▼
-   cubos_caba.py     → data/cubo_cp.parquet            ← cubo cruzado por dimensiones
-                       data/cubo_comuna.parquet         (alimenta filtros DuckDB-WASM)
+   cubos_caba.py     → data/cubo_cp.parquet            ← cubo cruzado por dimensiones (atómico)
+                       data/cp_barrio_weights.json      ← reparto CP4 → [(barrio, comuna, frac)]
                        data/cp_metrics.{parquet,json}   ← 1 fila por CP, métricas pre-agregadas
-                       data/barrio_metrics.{...}        ← 1 fila por barrio
-                       data/comuna_metrics.{...}        ← 1 fila por comuna
+                       data/barrio_metrics.{...}        ← 1 fila por barrio (REPARTO proporcional)
+                       data/comuna_metrics.{...}        ← 1 fila por comuna (REPARTO proporcional)
                        data/pais_sin_caba_resumen.json  ← totales del resto del país (comparativa)
                        data/caba_metadata.json          ← totales, filtros, fuentes
                        data/deudores_caba.parquet       ← 1 fila por persona (con CUIL, USO LOCAL)
                  │
                  ▼
                 index.html  ← consume todo lo de arriba + 2 geojson (barrios, comunas)
+                              · CP: usa cubo_cp directo (exacto)
+                              · Barrio/Comuna: cubo_cp + cp_barrio_weights (reparto en el browser)
 ```
 
 ### Actualizar el período (refresh de datos, ~1 min)
@@ -89,13 +91,13 @@ python cubos_caba.py             # cubos + métricas + JSON país
 
 | Archivo | Tamaño | Contenido |
 |---|---|---|
-| `data/cp_comuna.csv` | 8 KB | 284 CPs con `cp4, barrio, comuna, confianza_pct, n_segmentos, n_barrios_zona, fuente`. Editable. |
-| `data/cp_barrio_detalle.csv` | 15 KB | Distribución completa CP × barrio (auditoría). |
-| `data/cp_metrics.{parquet,json}` | 34 KB / 367 KB | 1 fila por CP con `n_personas, n_morosos, pct_mora_*, pct_personas_con_pnfc, deuda_*_miles`. |
-| `data/barrio_metrics.{...}` | 5 KB / 16 KB | Idem agregado por barrio. |
-| `data/comuna_metrics.{...}` | 4 KB / 7 KB | Idem agregado por comuna (16 filas: 15 comunas + Sin clasificar). |
-| `data/cubo_cp.parquet` | 5.6 MB | Cubo cruzado `cp4 × rango_etario × sexo × tramo × peor_sit × flags`. Para filtros vía DuckDB-WASM en el browser. |
-| `data/cubo_comuna.parquet` | 1.5 MB | Idem para comuna. |
+| `data/cp_comuna.csv` | 8 KB | 291 CPs con `cp4, barrio, comuna, confianza_pct, n_segmentos, n_barrios_zona, fuente`. `barrio` = dominante (referencia). Editable. |
+| `data/cp_barrio_detalle.csv` | 15 KB | Distribución completa CP × barrio con `peso` y `pct`. **Fuente de los pesos de reparto.** |
+| `data/cp_barrio_weights.json` | 17 KB | Reparto `cp4 → [[barrio, comuna, frac], …]` (frac normalizado a Σ=1). Lo consume el browser para repartir bajo filtros igual que el pipeline offline. |
+| `data/cp_metrics.{parquet,json}` | 34 KB / 367 KB | 1 fila por CP con `n_personas, n_morosos, pct_mora_*, pct_personas_con_pnfc, deuda_*_miles`. **Exacto** (el CP es la unidad atómica). |
+| `data/barrio_metrics.{...}` | 5 KB / 23 KB | Idem por barrio, **por reparto proporcional** (49 filas: 48 barrios + Sin clasificar). |
+| `data/comuna_metrics.{...}` | 4 KB / 7 KB | Idem por comuna, **por reparto proporcional** (16 filas: 15 comunas + Sin clasificar). |
+| `data/cubo_cp.parquet` | 5.6 MB | Cubo cruzado `cp4 × rango_etario × sexo × tramo × peor_sit × flags`. Para filtros vía DuckDB-WASM en el browser. Barrio y comuna se derivan de éste + `cp_barrio_weights.json` (no hay cubo_comuna). |
 | `data/pais_sin_caba_resumen.json` | 0.5 KB | Resumen país (resto, excluyendo CABA) para la comparativa de la sidebar. |
 | `data/caba_metadata.json` | 47 KB | Período, fecha_ref, fuentes, listas para filtros, totales globales. |
 | `geo/barrios.geojson` | 663 KB | 48 polígonos de barrios CABA (OpenDataCordoba). |
@@ -125,6 +127,15 @@ python cubos_caba.py             # cubos + métricas + JSON país
 > información desactualizada. Sin embargo, el sistema CPA argentino es muy
 > estable y la gran mayoría de las asignaciones siguen vigentes. El callejero
 > GCBA sí está actualizado al 2026 y se usa para los polígonos.
+>
+> **¿Por qué no scrapeamos el Correo para refrescar?** El buscador oficial de
+> CPA (`correoargentino.com.ar/formularios/cpa`) está detrás de Google
+> reCAPTCHA, por lo que el scraping masivo no es viable ni legítimo. Además, el
+> límite real de precisión no es el CPA: el padrón BCRA guarda **sólo el CP de 4
+> dígitos** por persona, así que ningún refresh permite ubicar a un individuo en
+> un barrio dentro de su CP. La mejora efectiva fue (a) el **reparto
+> proporcional** y (b) **mejorar el matching** calle↔callejero (24% → 11% sin
+> match), que refina los pesos con los datos del Correo que ya tenemos.
 
 
 ## Universo y métricas
@@ -159,67 +170,80 @@ WHERE LEFT(d.nro_id, 1) = '2'        -- personas físicas (prefijo CUIT 20/23/27
 ## Mapeo CP → barrio → comuna (lo más delicado)
 
 El código postal en CABA es una zona de cartero. **NO** calza 1:1 con barrios
-oficiales: una avenida grande puede atravesar varios barrios pero todos sus
-números tener un solo CP, y al revés.
+oficiales: un mismo CP4 suele cubrir **varios** barrios (especialmente en el
+oeste, donde el `1407` toca 11-12 barrios). Por eso **no** asignamos cada CP a
+un único barrio: **repartimos** sus datos entre los barrios que cubre.
 
-### Algoritmo (`armar_cp_barrio.py`)
+### Algoritmo (`armar_cp_barrio.py` → pesos; `cubos_caba.py` → reparto)
 
 1. **Match de calles**. Para cada calle del CPA en CABA, se busca su
-   equivalente en el callejero GCBA. La normalización maneja:
-   - Tildes y mayúsculas/minúsculas.
-   - Convención inversa: callejero usa `"ACEVEDO, EDUARDO"`, CPA `"EDUARDO
-     ACEVEDO"`. Tras invertir y quitar coma queda `"EDUARDO ACEVEDO"` en ambos.
-   - Prefijos de título (`DR.`, `GRAL.`, `INT.`, etc.) y sufijos de tipo de
-     calle (`AV`, `PJE`, etc.).
-   - **Match exacto**: 1.359 calles (66%); **fallback por apellido único**:
-     217 (10%); **sin match**: 492 (24%, calles muy específicas o renombradas).
+   equivalente en el callejero GCBA. La normalización maneja tildes,
+   mayúsculas, la convención inversa (callejero `"ACEVEDO, EDUARDO"` ↔ CPA
+   `"EDUARDO ACEVEDO"`), prefijos de título (`DR.`, `GRAL.`, …) y sufijos de
+   tipo de calle (`AV`, `PJE`, …). Cascada de match (`resolver_match`):
+   - **Match exacto** (nombre normalizado idéntico): 1.359 (66%).
+   - **Por apellido** (el apellido identifica una sola calle; incluye calles
+     del callejero de un solo token como `ANDONAEGUI`, `AGRELO`): 430 (21%).
+   - **Por tokens** (apellido ambiguo pero un nombre de pila compartido lo
+     desambigua, ej. `ANGEL CARRANZA` → `ANGEL JUSTINIANO CARRANZA`): 53 (3%).
+   - **Sin match**: 226 (11%, variantes ortográficas, iniciales genuinamente
+     ambiguas como `A/V ALSINA`, o calles ausentes del callejero).
 
-2. **Atribución de barrio por overlap de altura**. Para cada par
+2. **Pesos por barrio (overlap de altura)**. Para cada par
    `(calle, altura_desde, altura_hasta)` del CPA, intersectamos con los
-   segmentos del callejero (que tienen sus propios rangos por barrio).
+   segmentos del callejero (que tienen rangos por barrio).
    - Si el callejero no informa altura (segmentos `0-0`), **se descarta** el
-     voto. Esto evita atribuir incorrectamente barrios para avenidas largas
-     (Av. del Libertador, Corrientes) cuyos segmentos anónimos cruzan muchos
-     barrios.
-   - El peso es la fracción del rango del callejero cubierta por el rango del
-     CPA. No usamos longitud geométrica para no sesgar a favor de avenidas.
-   - Si los lados par e impar del callejero pertenecen a barrios distintos,
-     repartimos `0.5/0.5`.
+     voto. Evita atribuir mal barrios en avenidas largas (Libertador,
+     Corrientes) cuyos segmentos anónimos cruzan muchos barrios.
+   - El peso es la fracción del rango del callejero cubierta por el CPA (no
+     longitud geométrica, para no sesgar a favor de avenidas).
+   - Si los lados par/impar del callejero son barrios distintos, `0.5/0.5`.
+   Resultado: por cada CP4, un vector de pesos por barrio
+   (`data/cp_barrio_detalle.csv`).
 
-3. **Resolución del barrio dominante**. Por cada CP4 sumamos los pesos por
-   barrio. El barrio dominante es el de mayor peso; la `confianza_pct` es
-   `peso_dominante / peso_total`. Para 2026-05:
-   - **116 CPs** con confianza ≥ 95% (barrio totalmente claro).
-   - **23 CPs** con confianza 80-95%.
-   - **51 CPs** con confianza 60-80%.
-   - **63 CPs** con confianza 40-60% (marcados `(AMBIGUO)`).
-   - **7 CPs** con confianza < 40% (cubren múltiples barrios genuinamente).
-   El detalle por CP está en `data/cp_barrio_detalle.csv` (todos los barrios
-   candidatos por CP4 con porcentaje).
+3. **Reparto proporcional (areal interpolation, `cubos_caba.py`)**. Los
+   agregados de cada CP (personas, deuda, mora, PNFC) se **distribuyen** entre
+   sus barrios según los pesos normalizados (`frac`, Σ=1). En vez de asignar
+   todo al barrio dominante (winner-take-all), cada barrio recibe su parte.
+   - **Conserva los totales**: Σ barrios = Σ CPs = total global.
+   - **Puebla los 48 barrios**: ningún barrio queda en cero por estar siempre
+     "tapado" por un vecino más grande dentro del mismo CP.
+   - Es insesgado si los pesos ≈ share real de direcciones por barrio.
+   El reparto se exporta a `data/cp_barrio_weights.json` y el browser lo usa
+   para repartir también bajo filtros (sexo/edad/tramo) — mismo criterio
+   offline y online.
 
-4. **Overrides manuales** (`data/cp_comuna_override.csv`). Los CPs que no
-   aparecen en el dataset CPA (típicamente casillas postales de oficinas en el
-   Microcentro) se completan con asignaciones manuales documentadas. Sólo se
-   aplican cuando NO hay datos derivados; **los datos siempre ganan** sobre el
-   override.
+4. **Overrides manuales** (`data/cp_comuna_override.csv`). Los CPs sin calles
+   en el CPA (casillas postales del Microcentro) se completan con asignaciones
+   manuales (frac=1 a su único barrio). Sólo cuando NO hay datos derivados;
+   **los datos siempre ganan**.
 
-5. **Comuna**. Cada barrio CABA pertenece a una sola comuna. Joineamos contra
-   `geo/barrios.geojson` (atribución fija oficial).
+5. **Comuna**. Cada barrio pertenece a una sola comuna. El reparto a comuna se
+   deriva sumando las `frac` por comuna (corrige CPs que cruzan límites de
+   comuna, ej. `1430` reparte entre C12/C13/C15).
 
 ### Cobertura
 
-- **284 CPs mapeados** (260 derivados de datos + 24 overrides manuales).
-- **94.2% de las personas CABA** en el padrón BCRA tienen su CP mapeado a
-  comuna. El 5.8% restante son CPs sin calles en el dataset (4.6% sin CP en
-  el padrón + 1.2% con CP no mapeable).
+- **291 CPs mapeados** (279 derivados de datos + 12 overrides manuales). El
+  mejor matching recuperó ~270 calles antes sin match (24% → 11%) y subió los
+  CPs derivados de 260 a 279.
+- **94.3% de las personas CABA** en el padrón BCRA tienen su CP mapeado. El
+  ~5.7% restante (Sin clasificar) son CPs sin CP en el padrón o no mapeables.
 
-### Confianza en el panel detalle
+### Naturaleza de los valores y confianza
 
-Al clickear un CP en el mapa, junto al título aparece un chip con la confianza:
-- **Verde (≥80%)**: barrio dominante claro.
-- **Naranja (60-80%)**: barrio dominante razonable, otros barrios contribuyen.
-- **Rojo (<60%)**: ambiguo, el CP cubre múltiples barrios genuinamente. Tomar
-  con cautela la atribución a un solo barrio/comuna.
+- Los valores por **CP4 son exactos** (el CP es la unidad del dato).
+- Los valores por **barrio y comuna son estimaciones por reparto**: el padrón
+  BCRA guarda sólo el CP de 4 dígitos por persona, así que es imposible ubicar
+  a cada individuo en un barrio exacto. El reparto proporcional es la mejor
+  estimación posible y conserva los totales.
+
+Al clickear un CP en el mapa, el chip de confianza indica cuán concentrado está
+ese CP en un solo barrio:
+- **Verde (≥80%)**: el CP es casi todo un barrio → reparto ~directo.
+- **Naranja (60-80%)**: un barrio domina pero otros contribuyen.
+- **Rojo (<60%)**: el CP cubre genuinamente varios barrios → el reparto
+  distribuye entre ellos según peso.
 
 
 ## Polígonos por CP4 (`armar_poligonos_cp.py`)
@@ -296,8 +320,8 @@ Sigue las mismas reglas que el tablero principal:
 
 - **`data/deudores_caba.parquet`** contiene CUILs y NO debe publicarse
   (Ley 25.326 / datos personales). Sólo para análisis local.
-- Los cubos `cubo_cp.parquet` y `cubo_comuna.parquet` están agregados
-  (sin CUIL), publicables.
+- El cubo `cubo_cp.parquet` y los pesos `cp_barrio_weights.json` están
+  agregados (sin CUIL), publicables.
 - Los JSON pequeños (`*_metrics.json`, `caba_metadata.json`, etc.) son
   agregados y publicables.
 
@@ -307,10 +331,18 @@ Si este informe se publica como GitHub Pages, asegurarse de incluir el
 
 ## Cambios futuros / TODOs
 
+- [x] **Reparto proporcional** de los datos por CP entre sus barrios (areal
+      interpolation) en vez de winner-take-all. Puebla los 48 barrios y conserva
+      totales. Offline (`cubos_caba.py`) y online (`cp_barrio_weights.json`).
+- [x] **Mejorar el matching** calle CPA ↔ callejero GCBA (índice de apellido
+      para calles de un solo token + desambiguación por tokens): 24% → 11% sin
+      match, 260 → 279 CPs derivados.
 - [ ] Agregar selector de período en la cabecera (hoy lee el período activo
       de `caba_metadata.json` fijado por la corrida del script).
-- [ ] Refinar `cp_comuna_override.csv` con auditoría de los 7 CPs con
-      confianza < 40%.
-- [ ] Investigar fuentes alternativas para CPs sin match en CPA (catalogación
-      reciente del Correo Argentino) y volverlos derivados en lugar de manual.
+- [ ] Ponderar el reparto por cantidad de direcciones (altura) o densidad
+      poblacional por barrio, en vez de por fracción de rango de calle, para
+      afinar el share dentro de cada CP.
+- [ ] Recuperar parte del 11% de calles aún sin match (variantes ortográficas
+      tipo `BERUTI`/`BERUTTI`); las iniciales ambiguas (`A/V ALSINA`) no son
+      resolubles con el dato disponible.
 - [ ] Vista histórica del mapa (24 meses) si hay demanda.

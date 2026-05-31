@@ -195,6 +195,51 @@ def claves_match(nombre: str) -> list[str]:
     return [full, toks[-1]]
 
 
+# Partículas/conectores que no aportan a la desambiguación por nombre de pila.
+_PARTICULAS = {"DE", "DEL", "LA", "LAS", "LOS", "Y", "DI", "DA", "DO", "DOS",
+               "SAN", "SANTA", "SANTO"}
+
+def resolver_match(info, full_idx, last_idx):
+    """
+    Devuelve (clave_callejero, tipo) o (None, None) para una calle del CPA.
+    Estrategia en cascada, de más a menos confiable:
+      1. "full"     — nombre normalizado idéntico (match exacto).
+      2. "apellido" — el apellido (último token) identifica UNA sola calle del
+                      callejero. Cubre "JOSE DE ANDONAEGUI" (CPA) → "ANDONAEGUI"
+                      (callejero) y viceversa "ALBERDI" (CPA) → "JUAN BAUTISTA
+                      ALBERDI" (callejero).
+      3. "tokens"   — el apellido es ambiguo (varias calles), pero UNA candidata
+                      comparte ≥2 tokens con la calle del CPA y es ganadora
+                      estricta. Resuelve homónimos por nombre de pila
+                      ("MANUEL E ARIAS" vs otro "ARIAS").
+    Sólo matchea cuando hay un ganador inequívoco — nunca adivina entre empates.
+    """
+    nf = info["norm_full"]
+    if not nf:
+        return None, None
+    if nf in full_idx:
+        return nf, "full"
+    toks = nf.split()
+    surname = toks[-1]
+    cands = last_idx.get(surname)
+    if not cands:
+        return None, None
+    unique_fulls = {c[0] for c in cands}
+    if len(unique_fulls) == 1:
+        return next(iter(unique_fulls)), "apellido"
+    # Apellido ambiguo: desambiguar exigiendo al menos UN nombre de pila en común,
+    # sin contar el apellido (que siempre coincide) ni partículas/títulos. Así
+    # "ANGEL CARRANZA"→"ANGEL JUSTINIANO CARRANZA" matchea, pero "PEDRO DEL
+    # CASTILLO"→"JUAN DEL CASTILLO" (sólo comparten la partícula) NO.
+    cpa_given = set(toks) - {surname} - _PARTICULAS
+    def _score(fk):
+        return len((set(fk.split()) - {surname} - _PARTICULAS) & cpa_given)
+    scored = sorted(((_score(fk), fk) for fk in unique_fulls), reverse=True)
+    if scored[0][0] >= 1 and (len(scored) == 1 or scored[0][0] > scored[1][0]):
+        return scored[0][1], "tokens"
+    return None, None
+
+
 # ─── CARGA DE DATASETS ────────────────────────────────────────────────────────
 
 def cargar_callejero():
@@ -247,8 +292,14 @@ def cargar_callejero():
                 "comuna":     com,
             }
             full_idx[full].append(seg)
-            if last and last != full:
-                last_idx[last].append((full, seg))
+            # Índice por APELLIDO (último token del nombre normalizado) para TODAS
+            # las calles, incluidas las de un solo token (ej. "ANDONAEGUI", "AGRELO").
+            # Antes sólo se indexaban las multi-token, por lo que las calles del CPA
+            # con nombre completo ("JOSE DE ANDONAEGUI") no encontraban su apellido.
+            toks_full = full.split()
+            surname = toks_full[-1] if toks_full else ""
+            if surname:
+                last_idx[surname].append((full, seg))
     return full_idx, last_idx
 
 
@@ -349,29 +400,23 @@ def derivar_cp_a_barrio():
 
     # Match calles CPA contra callejero GCBA
     print("[3] Matcheando calles CPA → callejero GCBA…", flush=True)
-    matched_full = matched_last = unmatched = 0
-    # Para cada codcalle, decidir qué clave usar (full primero, last como fallback)
-    match_key = {}  # codcalle -> (key, kind)  kind ∈ {"full","last"}
+    matched_full = matched_last = matched_tok = unmatched = 0
+    # Para cada codcalle, decidir qué clave usar (full → apellido → tokens)
+    match_key = {}  # codcalle -> (key, kind)  kind ∈ {"full","apellido","tokens"}
     for cc, info in calles_caba.items():
-        if info["norm_full"] in full_idx:
-            match_key[cc] = (info["norm_full"], "full")
-            matched_full += 1
-        elif info["norm_last"] and info["norm_last"] in last_idx:
-            # Sólo usar fallback si la calle del CPA NO es ambigua y last_idx tiene
-            # una única calle "completa" para ese apellido.
-            candidatos = last_idx[info["norm_last"]]
-            unique_fulls = {c[0] for c in candidatos}
-            if len(unique_fulls) == 1:
-                match_key[cc] = (next(iter(unique_fulls)), "last")
-                matched_last += 1
-            else:
-                unmatched += 1
+        key, kind = resolver_match(info, full_idx, last_idx)
+        if kind == "full":
+            match_key[cc] = (key, kind); matched_full += 1
+        elif kind == "apellido":
+            match_key[cc] = (key, kind); matched_last += 1
+        elif kind == "tokens":
+            match_key[cc] = (key, kind); matched_tok += 1
         else:
             unmatched += 1
-    total = matched_full + matched_last + unmatched
-    pct = 100.0*(matched_full + matched_last)/total if total else 0
+    total = matched_full + matched_last + matched_tok + unmatched
+    pct = 100.0*(matched_full + matched_last + matched_tok)/total if total else 0
     print(f"     Match exacto: {matched_full:,} | por apellido: {matched_last:,} | "
-          f"sin match: {unmatched:,} ({pct:.1f}% total matcheado)", flush=True)
+          f"por tokens: {matched_tok:,} | sin match: {unmatched:,} ({pct:.1f}% total matcheado)", flush=True)
 
     # Iterar alturas y acumular: (cp4, barrio) -> peso
     print("[4] Iterando alturas y atribuyendo barrios por CP4 (rango por rango)…", flush=True)
