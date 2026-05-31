@@ -71,10 +71,11 @@ ALTURAS     = DATA_DIR / "alturas.CSV"
 CP_COMUNA   = DATA_DIR / "cp_comuna.csv"
 OUT_GEO     = GEO_DIR  / "cps.geojson"
 
-# Re-uso la normalización de armar_cp_barrio.py para consistencia
+# Re-uso la normalización y el matcher de armar_cp_barrio.py para consistencia
 sys.path.insert(0, str(SCRIPT_DIR))
 from armar_cp_barrio import (
-    normalizar_calle, claves_match, cargar_callejero, cargar_calles_caba_cpa
+    normalizar_calle, claves_match, cargar_callejero, cargar_calles_caba_cpa,
+    resolver_match, cargar_alturas_caba,
 )
 
 # Buffer alrededor de cada LINESTRING (en grados WGS84).
@@ -111,8 +112,19 @@ def parse_linestring_wkt(wkt: str) -> LineString | None:
 
 
 def cargar_geom_callejero():
-    """Para cada nombre normalizado del callejero, lista las geometrías LINESTRING."""
-    geoms = defaultdict(list)  # full_clave -> [LineString, ...]
+    """
+    Para cada nombre normalizado del callejero, lista (LineString, alt_min, alt_max).
+    El rango de altura permite recortar (clip) la geometría al tramo que realmente
+    pertenece a cada CP — sin esto, una calle larga que cruza varios CPs arrastra
+    su geometría completa a TODOS ellos (ej. Av. San Martín apareciendo en un CP
+    del Centro). Devuelve también el set de claves que tienen alguna altura
+    informada (para decidir si una calle es recortable).
+    """
+    geoms = defaultdict(list)   # clave -> [(LineString, alt_min, alt_max), ...]
+    con_altura = set()          # claves con al menos un segmento con altura > 0
+    def _i(x):
+        try: return int(x)
+        except Exception: return 0
     with CALLEJERO.open(encoding="utf-8") as f:
         r = csv.DictReader(f)
         for row in r:
@@ -123,30 +135,15 @@ def cargar_geom_callejero():
             ls = parse_linestring_wkt(row.get("geometry", ""))
             if ls is None or ls.is_empty:
                 continue
-            geoms[claves[0]].append(ls)
-    return geoms
-
-
-def cargar_cp_a_calles():
-    """
-    Devuelve dict: cp4 -> set(codcalle).
-    Sólo CABA (codloc=00005001) y CPs C... válidos.
-    Reuso el iterador de armar_cp_barrio pero más simple acá.
-    """
-    out = defaultdict(set)
-    with ALTURAS.open(encoding="latin-1") as f:
-        r = csv.DictReader(f, delimiter=";")
-        for row in r:
-            cpa = (row.get("codpostal") or "").strip().strip('"')
-            if len(cpa) < 5 or cpa[0] != "C":
-                continue
-            cp4 = cpa[1:5]
-            if not cp4.isdigit():
-                continue
-            cc = row.get("codcalle")
-            if cc:
-                out[cp4].add(cc)
-    return out
+            lo_p, hi_p = _i(row.get("alt_izqini")), _i(row.get("alt_izqfin"))
+            lo_i, hi_i = _i(row.get("alt_derini")), _i(row.get("alt_derfin"))
+            alt_min = min([v for v in (lo_p, lo_i) if v > 0], default=0)
+            alt_max = max([hi_p, hi_i, lo_p, lo_i], default=0)
+            clave = claves[0]
+            geoms[clave].append((ls, alt_min, alt_max))
+            if alt_max > 0:
+                con_altura.add(clave)
+    return geoms, con_altura
 
 
 def cargar_cp_metadata():
@@ -159,20 +156,36 @@ def cargar_cp_metadata():
     return out
 
 
+# Distancia máxima (grados) de un componente desconectado al cuerpo principal del
+# CP para conservarlo. Los CP4 en CABA son zonas contiguas: un componente a más
+# de ~1 km del cuerpo principal es casi siempre el sliver de una calle homónima
+# que el clip de altura no alcanzó a filtrar (mismo nombre + altura coincidente).
+COMPONENT_MAX_GAP_DEG = 0.011  # ≈ 1.1 km
+
 def construir_poligono_cp(geoms_calles_cp, buffer_deg=BUFFER_DEG):
-    """Toma una lista de LineString, las bufferea y une. Devuelve un polígono (o None)."""
+    """Toma una lista de LineString, las bufferea y une. Devuelve un polígono (o None).
+
+    Tras la unión, si el resultado es un MultiPolygon (piezas desconectadas),
+    toma el componente de mayor área como cuerpo principal y descarta los que
+    estén a más de COMPONENT_MAX_GAP_DEG de él: son slivers de calles homónimas.
+    Conserva los fragmentos cercanos (separados por pequeños gaps del buffer).
+    """
     if not geoms_calles_cp:
         return None, 0
-    # Buffer + union; usamos buffer "round" (default).
     buffers = [g.buffer(buffer_deg) for g in geoms_calles_cp if not g.is_empty]
     if not buffers:
         return None, 0
     poly = unary_union(buffers)
     if poly.is_empty:
         return None, 0
-    # Simplify
+    if poly.geom_type == "MultiPolygon":
+        parts = sorted(poly.geoms, key=lambda p: p.area, reverse=True)
+        main = parts[0]
+        keep = [main] + [p for p in parts[1:]
+                         if p.distance(main) <= COMPONENT_MAX_GAP_DEG]
+        poly = unary_union(keep) if len(keep) > 1 else keep[0]
     poly = poly.simplify(SIMPLIFY_TOL, preserve_topology=True)
-    return poly, sum(g.length for g in geoms_calles_cp)  # length en grados, sólo informativa
+    return poly, sum(g.length for g in geoms_calles_cp)
 
 
 def main():
@@ -189,46 +202,54 @@ def main():
     print()
 
     t0 = time.time()
-    print("[1] Cargando callejero (geometrías)…", flush=True)
-    geoms_cj = cargar_geom_callejero()
+    print("[1] Cargando callejero (geometrías + altura)…", flush=True)
+    geoms_cj, con_altura = cargar_geom_callejero()
     print(f"     {len(geoms_cj):,} claves con geometría", flush=True)
     n_ls = sum(len(v) for v in geoms_cj.values())
     print(f"     {n_ls:,} segmentos LINESTRING totales", flush=True)
 
-    print("\n[2] Cargando calles CABA del CPA + matcheo…", flush=True)
+    print("\n[2] Cargando calles CABA del CPA + matcheo (full+apellido+tokens)…", flush=True)
     calles_caba = cargar_calles_caba_cpa()
     print(f"     {len(calles_caba):,} codcalles únicos en CABA", flush=True)
 
-    # Mapeo codcalle → clave full (reusando lógica de armar_cp_barrio)
-    full_set = set(geoms_cj.keys())
-    cc_to_full = {}
+    # Mapeo codcalle → clave del callejero, con el MISMO matcher que los pesos
+    # (armar_cp_barrio.resolver_match): exacto → apellido único → tokens.
+    full_idx, last_idx = cargar_callejero()
+    cc_to_clave = {}
+    n_match = 0
     for cc, info in calles_caba.items():
-        nf = info["norm_full"]
-        nl = info["norm_last"]
-        if nf in full_set:
-            cc_to_full[cc] = nf
-        elif nl:
-            # Por simplicidad: usamos full_set como anchor; el fallback last no aplica aquí
-            # (los polígonos sólo necesitan estar lo más correctamente atribuidos posible;
-            # el fallback last era para resolver el barrio, acá no hace falta).
-            pass
+        clave, kind = resolver_match(info, full_idx, last_idx)
+        if clave and clave in geoms_cj:
+            cc_to_clave[cc] = clave
+            n_match += 1
+    print(f"     {n_match:,} codcalles matcheados a una calle con geometría", flush=True)
 
-    print("\n[3] Calculando CP4 → conjunto de calles…", flush=True)
-    cp_a_calles = cargar_cp_a_calles()
-    print(f"     {len(cp_a_calles):,} CPs con al menos 1 codcalle", flush=True)
+    print("\n[3] CP4 → tramos de calle (codcalle + rango de altura del CPA)…", flush=True)
+    cp_tramos = defaultdict(list)  # cp4 -> [(clave, lo, hi), ...]
+    for cc, lo, hi, cp4 in cargar_alturas_caba(set(calles_caba.keys())):
+        clave = cc_to_clave.get(cc)
+        if clave:
+            cp_tramos[cp4].append((clave, lo, hi))
+    print(f"     {len(cp_tramos):,} CPs con al menos 1 tramo matcheado", flush=True)
 
     cp_metadata = cargar_cp_metadata()
 
-    print("\n[4] Construyendo polígonos (buffer + union)…", flush=True)
+    def _overlap(lo, hi, a_lo, a_hi):
+        return a_hi > 0 and not (hi < a_lo or lo > a_hi)
+
+    print("\n[4] Construyendo polígonos (clip por altura + buffer + union)…", flush=True)
     features = []
-    cps_ordered = sorted(cp_a_calles.keys())
+    cps_ordered = sorted(cp_tramos.keys())
     ok = vacios = 0
     for i, cp4 in enumerate(cps_ordered):
-        # Calcular conjunto de LineStrings de las calles del CP
+        # Incluir SÓLO los segmentos del callejero cuya altura cae en el tramo que
+        # el CPA asigna a este CP. Una calle sin ninguna altura informada en el
+        # callejero (no recortable) se incluye entera (caso raro, calles cortas).
         ls_list = []
-        for cc in cp_a_calles[cp4]:
-            if cc in cc_to_full:
-                ls_list.extend(geoms_cj[cc_to_full[cc]])
+        for clave, lo, hi in cp_tramos[cp4]:
+            for (ls, a_lo, a_hi) in geoms_cj.get(clave, []):
+                if _overlap(lo, hi, a_lo, a_hi) or (clave not in con_altura):
+                    ls_list.append(ls)
         if not ls_list:
             vacios += 1
             continue

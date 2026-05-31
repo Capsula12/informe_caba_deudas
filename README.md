@@ -47,8 +47,8 @@ Y abrir [http://localhost:8766/](http://localhost:8766/).
                           data/cp_barrio_detalle.csv   ← TODA la distribución CP×barrio (pesos)
                  │
                  ▼
-   armar_poligonos_cp.py → geo/cps.geojson             ← 255 polígonos por CP4 derivados
-                 │                                         del callejero (buffer 60m + union)
+   armar_poligonos_cp.py → geo/cps.geojson             ← 280 polígonos por CP4 (callejero
+                 │                                         recortado por altura + buffer 60m)
                  ▼
    cubos_caba.py     → data/cubo_cp.parquet            ← cubo cruzado por dimensiones (atómico)
                        data/cp_barrio_weights.json      ← reparto CP4 → [(barrio, comuna, frac)]
@@ -102,7 +102,7 @@ python cubos_caba.py             # cubos + métricas + JSON país
 | `data/caba_metadata.json` | 47 KB | Período, fecha_ref, fuentes, listas para filtros, totales globales. |
 | `geo/barrios.geojson` | 663 KB | 48 polígonos de barrios CABA (OpenDataCordoba). |
 | `geo/comunas.geojson` | 502 KB | 15 polígonos de comunas (disolución de barrios). |
-| `geo/cps.geojson` | 1.5 MB | 255 polígonos por CP4 derivados del callejero. |
+| `geo/cps.geojson` | 0.95 MB | 280 polígonos por CP4 derivados del callejero (geometría recortada por altura). |
 
 ### Archivos locales (con CUILs, NO publicar)
 
@@ -251,15 +251,34 @@ ese CP en un solo barrio:
 No existe un GeoJSON oficial de polígonos por código postal en CABA. Los
 construimos así:
 
-1. Para cada CP4, identificar las LINESTRING del callejero que pertenecen a
-   sus calles (usando el mismo mapeo del paso anterior).
-2. Aplicar un buffer de **0.0006 grados** (~60 m, media cuadra urbana CABA).
-3. Hacer `unary_union` de todos los buffers → polígono cohesivo.
-4. Simplificar con `simplify(5e-5)` (~5 m) para reducir tamaño.
+1. Para cada CP4, identificar las LINESTRING del callejero de sus calles, con el
+   **mismo matcher que los pesos** (`resolver_match`: exacto + apellido + tokens).
+2. **Clip por altura**: incluir sólo los segmentos del callejero cuya altura cae
+   en el tramo que el CPA asigna a ese CP. Sin esto, una calle larga que cruza
+   varios CPs (ej. Av. San Martín) arrastra su geometría **completa** a todos
+   ellos — apareciendo un pedazo del CP del Centro allá en el oeste. El clip
+   recorta cada calle al tramo que realmente le corresponde al CP.
+3. Buffer de **0.0006 grados** (~60 m, media cuadra) + `unary_union`.
+4. **Filtro de componentes**: si la unión queda en piezas desconectadas, se
+   toma el cuerpo principal (mayor área) y se descartan los componentes a más de
+   ~1,1 km — son *slivers* de calles homónimas (mismo nombre + altura
+   coincidente) que el clip no alcanzó a filtrar. Los CP4 en CABA son contiguos,
+   así que un componente lejano es casi siempre bleed.
+5. Simplificar con `simplify(5e-5)` (~5 m) para reducir tamaño.
 
-**Resultado**: 255 polígonos por CP4 que siguen las calles. Pueden solaparse
-con CPs vecinos (es la realidad: una manzana puede tener CPs distintos según
-el lado de la calle). No los recortamos para que el mapa refleje esa realidad.
+**Resultado**: 280 polígonos por CP4 que siguen las calles, con un ancho de
+bounding-box mediano de ~1,6 km (antes había CPs de >15 km por el bleed de
+calles largas/homónimas). Pueden solaparse con CPs vecinos (es la realidad: una
+manzana puede tener CPs distintos según el lado de la calle); no los recortamos
+entre sí para que el mapa refleje eso.
+
+> **Limitación residual**: los CP del oeste (`14xx`) son zonas postales
+> genuinamente grandes (cubren varios barrios) y mantienen un ancho de 5-8 km,
+> mayormente real. Un caso difícil son los homónimos con altura coincidente
+> (ej. "San Martín" calle del Centro vs "Av. San Martín" del oeste, ambas con
+> altura ~1200): nombre y altura no los distinguen, y si el sliver queda pegado
+> al cuerpo del CP no se filtra. Resolverlo del todo requeriría matching a nivel
+> de identidad de calle (codcalle) que el dataset no soporta limpiamente.
 
 
 ## Comparativa CABA vs resto del país
